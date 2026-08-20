@@ -3,16 +3,21 @@ import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { getActiveCompany, parseBusinessHours, parseServiceZipCodes } from "@/lib/company";
-import { assertSlotBookable, DoubleBookingError } from "@/lib/scheduling";
+import { assertSlotBookable, CapacityExceededError, DoubleBookingError } from "@/lib/scheduling";
 import { isInServiceArea } from "@/lib/qualification";
 import { requireSession } from "@/lib/require-session";
 import { MESSAGE_TEMPLATES } from "@/lib/communications";
 import { sendIfAllowed } from "@/lib/suppression";
+import { verifyLeadToken } from "@/lib/funnel-capability";
 
 const bookSchema = z.object({
   leadId: z.string().min(1),
+  leadToken: z.string().min(1),
   start: z.string().datetime(),
-  end: z.string().datetime(),
+  // Accepted for backward/display compatibility but never trusted — the
+  // server always derives the authoritative end from
+  // start + company.inspectionDurationMinutes (see docs/GOAL_AUDIT.md).
+  end: z.string().datetime().optional(),
   inspectorId: z.string().nullable().optional(),
 });
 
@@ -21,11 +26,21 @@ export async function POST(req: NextRequest) {
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
   }
-  const { leadId, start, end, inspectorId } = parsed.data;
+  const { leadId, leadToken, start, inspectorId } = parsed.data;
 
   const company = await getActiveCompany();
   const lead = await prisma.lead.findFirst({ where: { id: leadId, companyId: company.id } });
   if (!lead) return NextResponse.json({ error: "Lead not found" }, { status: 404 });
+
+  // A bare leadId is never sufficient proof this caller may book/consume
+  // this lead's inspection slot (see src/lib/funnel-capability.ts).
+  const owns = verifyLeadToken({
+    companyId: company.id,
+    leadId: lead.id,
+    visitorId: lead.visitorId ?? "",
+    token: leadToken,
+  });
+  if (!owns) return NextResponse.json({ error: "forbidden" }, { status: 403 });
 
   const serviceZipCodes = parseServiceZipCodes(company);
   const inArea = isInServiceArea(lead.zipCode ?? undefined, serviceZipCodes);
@@ -36,8 +51,27 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  // An inspectorId, if supplied, must actually belong to this company and
+  // be active — never trust an opaque client-supplied id (see
+  // docs/GOAL_AUDIT.md: cross-tenant inspector usage / inactive inspector).
+  let inspector = null;
+  if (inspectorId) {
+    inspector = await prisma.inspector.findFirst({
+      where: { id: inspectorId, companyId: company.id, active: true },
+    });
+    if (!inspector) {
+      return NextResponse.json(
+        { error: "invalid_inspector", reason: "Selected inspector is not available." },
+        { status: 400 },
+      );
+    }
+  }
+
   const requestedStart = new Date(start);
-  const requestedEnd = new Date(end);
+  // Authoritative end is always derived server-side from the company's
+  // configured duration — a client can't submit a zero, negative,
+  // shortened, or lengthened appointment (see docs/GOAL_AUDIT.md).
+  const requestedEnd = new Date(requestedStart.getTime() + company.inspectionDurationMinutes * 60_000);
   const businessHours = parseBusinessHours(company);
 
   const dayStart = new Date(requestedStart);
@@ -45,28 +79,32 @@ export async function POST(req: NextRequest) {
   const dayEnd = new Date(requestedStart);
   dayEnd.setHours(23, 59, 59, 999);
 
-  const existingAppointments = await prisma.appointment.findMany({
-    where: {
-      companyId: company.id,
-      status: { in: ["booked", "rescheduled"] },
-      scheduledStart: { gte: dayStart, lte: dayEnd },
-    },
-    select: { scheduledStart: true, scheduledEnd: true },
-  });
+  const loadDayAppointments = async (client: Prisma.TransactionClient | typeof prisma) => {
+    const rows = await client.appointment.findMany({
+      where: {
+        companyId: company.id,
+        status: { in: ["booked", "rescheduled"] },
+        scheduledStart: { gte: dayStart, lte: dayEnd },
+      },
+      select: { scheduledStart: true, scheduledEnd: true },
+    });
+    return rows.map((a) => ({ start: a.scheduledStart, end: a.scheduledEnd }));
+  };
 
   try {
     assertSlotBookable({
       requested: { start: requestedStart, end: requestedEnd },
-      existingAppointments: existingAppointments.map((a) => ({
-        start: a.scheduledStart,
-        end: a.scheduledEnd,
-      })),
+      existingAppointments: await loadDayAppointments(prisma),
       businessHours,
       maxDailyInspections: company.maxDailyInspections,
+      durationMinutes: company.inspectionDurationMinutes,
     });
   } catch (err) {
     if (err instanceof DoubleBookingError) {
       return NextResponse.json({ error: "double_booked", reason: err.message }, { status: 409 });
+    }
+    if (err instanceof CapacityExceededError) {
+      return NextResponse.json({ error: "capacity_exceeded", reason: err.message }, { status: 409 });
     }
     return NextResponse.json(
       { error: "not_bookable", reason: err instanceof Error ? err.message : "Invalid slot" },
@@ -76,39 +114,76 @@ export async function POST(req: NextRequest) {
 
   let appointment;
   try {
-    appointment = await prisma.$transaction(async (tx) => {
-      const created = await tx.appointment.create({
-        data: {
-          companyId: company.id,
-          leadId: lead.id,
-          inspectorId: inspectorId ?? null,
-          scheduledStart: requestedStart,
-          scheduledEnd: requestedEnd,
-          status: "booked",
-        },
-      });
-      await tx.lead.update({ where: { id: lead.id }, data: { status: "inspection_booked" } });
-      await tx.funnelEvent.create({
-        data: {
-          companyId: company.id,
-          leadId: lead.id,
-          visitorId: lead.visitorId ?? lead.id,
-          eventType: "appointment_booked",
-          source: lead.source,
-          medium: lead.medium,
-          campaign: lead.campaign,
-        },
-      });
-      return created;
-    });
+    appointment = await prisma.$transaction(
+      async (tx) => {
+        // Authoritative, immediately-before-insert re-check, run again
+        // inside the transaction to close almost all of the TOCTOU window
+        // between the pre-check above and the write below (see
+        // docs/GOAL_AUDIT.md and docs/ARCHITECTURE.md for the full
+        // concurrency-guarantee writeup, including what's PostgreSQL-only
+        // and not provable under this environment's SQLite).
+        assertSlotBookable({
+          requested: { start: requestedStart, end: requestedEnd },
+          existingAppointments: await loadDayAppointments(tx),
+          businessHours,
+          maxDailyInspections: company.maxDailyInspections,
+          durationMinutes: company.inspectionDurationMinutes,
+        });
+
+        const created = await tx.appointment.create({
+          data: {
+            companyId: company.id,
+            leadId: lead.id,
+            inspectorId: inspector?.id ?? null,
+            scheduledStart: requestedStart,
+            scheduledEnd: requestedEnd,
+            status: "booked",
+          },
+        });
+        await tx.lead.update({ where: { id: lead.id }, data: { status: "inspection_booked" } });
+        await tx.funnelEvent.create({
+          data: {
+            companyId: company.id,
+            leadId: lead.id,
+            visitorId: lead.visitorId ?? lead.id,
+            eventType: "appointment_booked",
+            source: lead.source,
+            medium: lead.medium,
+            campaign: lead.campaign,
+          },
+        });
+        return created;
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
   } catch (err) {
-    // DB-level unique(inspectorId, scheduledStart) constraint is the final
-    // guard against a race between the check above and this write.
+    // Final, atomic backstop against a genuinely concurrent request that
+    // beat the in-transaction re-check above: the partial unique DB index
+    // on (companyId, scheduledStart) for active appointments (see
+    // prisma/schema.prisma) turns a same-slot race into a P2002 here,
+    // proven against this environment's SQLite (see
+    // scripts referenced in docs/ARCHITECTURE.md) and expected to hold
+    // identically on PostgreSQL (unique-index enforcement is atomic on
+    // both). P2034 is PostgreSQL's serializable-transaction conflict
+    // error — SQLite never produces it, so this path is unverified here
+    // and MUST be exercised against real PostgreSQL before launch.
     if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") {
       return NextResponse.json(
         { error: "double_booked", reason: "This time slot was just taken." },
         { status: 409 },
       );
+    }
+    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2034") {
+      return NextResponse.json(
+        { error: "conflict", reason: "This booking conflicted with another request — please try again." },
+        { status: 409 },
+      );
+    }
+    if (err instanceof DoubleBookingError) {
+      return NextResponse.json({ error: "double_booked", reason: err.message }, { status: 409 });
+    }
+    if (err instanceof CapacityExceededError) {
+      return NextResponse.json({ error: "capacity_exceeded", reason: err.message }, { status: 409 });
     }
     throw err;
   }

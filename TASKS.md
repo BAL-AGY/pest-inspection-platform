@@ -63,11 +63,67 @@ before this audit.
       carried but does not currently gate any route or UI differently
 - [ ] **(gap, audit)** No rate limiting on public unauthenticated endpoints
       (`/api/leads` POST, `/api/track`, `/api/appointments` POST) — no
-      `middleware.ts` exists. Needed before real public traffic.
+      `middleware.ts` exists. Needed before real public traffic. Raised in
+      priority by the 2026-08-21 Step 15 Codex audit: with IDOR closed, a
+      scripted flood of legitimate-shaped requests is the next-highest
+      abuse vector.
 - [ ] **(gap, audit)** Tenant/company isolation is architecturally correct
       by code inspection (every query scoped by `session.companyId`) but
       only one `Company` exists, so it has never been exercised by a test
-      proving cross-tenant queries actually return nothing
+      proving cross-tenant queries actually return nothing. Additionally
+      (2026-08-21 Codex audit, confirmed): public routes resolve tenant
+      via `getActiveCompany()` with no request-derived tenant signal at
+      all — a deliberate, documented single-tenant-for-v1 scope, not a
+      live vulnerability today, but needs real tenant resolution before a
+      second company goes live.
+- [x] **(fixed 2026-08-21 — Step 15; continuation-bypass closed + secret/
+      lifetime hardened Step 17)** Public lead ownership / IDOR
+      protection. An independent audit (OpenAI Codex) found, and direct
+      code inspection confirmed, that `POST /api/leads` continuation,
+      `POST /api/appointments`, and `GET /api/availability` trusted a bare
+      `leadId` with no proof the caller was the visitor who created it —
+      anyone who obtained a lead's id could rewrite its contact/consent or
+      book its slot. Fixed with `src/lib/funnel-capability.ts`: an
+      HMAC-signed capability token, derived from the lead's real
+      server-side `visitorId`, issued on every lead-scoped response and
+      required on every subsequent request (JSON body field, or
+      `X-Funnel-Token` header for the GET availability route so it doesn't
+      leak into browser history the way `leadId` itself already does).
+      `visitorId` is frozen after creation.
+      **Step 17 (same day): a second adversarial review found this fix
+      was incomplete.** `POST /api/leads`' "no leadId" branch still looked
+      up and mutated any existing lead by `visitorId` alone — no token
+      check — and handed back a fresh valid token for it, so knowing a
+      victim's `visitorId` (not just their `leadId`) still fully hijacked
+      their lead. Root cause: that branch didn't distinguish true
+      first-time creation (nothing to protect) from continuing a lead
+      that already exists (must be authenticated). Fixed by treating "no
+      leadId" as unconditionally "create a new lead" — never a
+      `visitorId`-based reattachment to an existing one. Also hardened:
+      `FUNNEL_CAPABILITY_SECRET` now fails closed in production with no
+      `AUTH_SECRET` fallback (enforced at startup via
+      `src/instrumentation.ts` and per-request), and tokens now expire
+      after 4 hours (`LEAD_TOKEN_TTL_MS`) instead of being valid
+      indefinitely — every successful response re-issues a fresh token, so
+      an actively continuing visitor never approaches the limit. Both the
+      Step 15 and Step 17 fixes were sanity-checked by temporarily
+      reverting each and confirming its adversarial test genuinely fails,
+      then re-applying. `POST /api/track` remains deliberately unprotected
+      — it only writes an informational event row, never reads/mutates
+      lead data back. **Documented, deliberately deferred limitation**:
+      the token is stored in `localStorage`, not an `httpOnly` cookie —
+      see `docs/ARCHITECTURE.md` Known gaps item 12 for the honest
+      analysis (it does not meaningfully weaken protection against an
+      *active* same-origin XSS attacker, but a token leaked another way
+      is replayable until it expires). A full re-audit of every route
+      accepting `leadId`/`visitorId`/`companyId`/a token found no further
+      instance of this bypass pattern. See `docs/GOAL_AUDIT.md` and
+      `docs/ARCHITECTURE.md` for full detail.
+- [ ] **(gap, audit — 2026-08-21 Codex)** `prisma/seed.ts` has a hardcoded
+      default owner password (`"changeme123"`) with no `NODE_ENV`/
+      production guard. Running `npm run db:seed` against production
+      without setting `SEED_OWNER_PASSWORD` grants full dashboard access
+      with a publicly known password.
 
 ## 4. Public landing page
 
@@ -92,6 +148,14 @@ before this audit.
 - [ ] **(gap, prior)** `assessment_step_completed` / `cta_clicked` event
       instrumentation — only `assessment_start` is tracked; per-question
       drop-off inside the funnel isn't measurable — `docs/EVENTS.md`
+- [ ] **(gap, audit — 2026-08-21 Codex)** `POST /api/leads`' `answers`
+      field accepts any key/value (`z.record(z.string(), z.unknown())`)
+      with no check against each question's declared allowed values, and
+      doesn't require progressive/ordered submission — a script can
+      submit all six answers in one request. Not a scoring bypass (score/
+      classification are always server-recomputed from the merged
+      answers, never trusted directly), but combined with the still-open
+      rate-limiting gap it's a path to automated fake-lead generation.
 
 ## 6. Lead scoring
 
@@ -104,10 +168,47 @@ before this audit.
 ## 7. Scheduling
 
 - [x] Business-hours + duration + capacity-aware availability generation —
-      `src/lib/scheduling.ts`
-- [x] Booking with double-booking prevention (app-level overlap check +
-      DB-level unique constraint as race guard) — verified in
-      `e2e/full-funnel.spec.ts`
+      `src/lib/scheduling.ts`. Business-hours boundaries use server-local
+      time, not `company.timezone` — **(gap, audit — 2026-08-21 Codex,
+      not fixed in Step 15)**, see below.
+- [x] **(fixed 2026-08-21 — Step 15)** Booking with atomic double-booking
+      prevention. An independent audit (OpenAI Codex) found, and a
+      standalone verification script confirmed, that the prior DB-level
+      guard (`@@unique([inspectorId, scheduledStart])`) never actually
+      worked: every booking has `inspectorId = null`, and SQL unique
+      indexes treat NULLs as distinct, so it never fired — double-booking
+      prevention rested entirely on a non-atomic check-then-insert read.
+      Replaced with a partial unique index on `(companyId, scheduledStart)`
+      filtered to active statuses (migration
+      `20260820220719_atomic_booking_slot_guard`; not expressible as a
+      Prisma `@@unique`), plus an in-transaction re-check under
+      `Serializable` isolation immediately before every write (booking and
+      reschedule). Verified: the standalone script proved the exact
+      SQLite behavior; `e2e/booking-security.spec.ts` fires two genuinely
+      concurrent `POST /api/appointments` requests via `Promise.all` and
+      asserts exactly one succeeds, and separately proves real
+      daily-capacity exhaustion is rejected. **Residual, explicitly
+      unverified item**: the daily-capacity race under concurrent
+      PostgreSQL load specifically (as opposed to the same-slot race,
+      which is provably atomic on both engines) — see
+      `docs/ARCHITECTURE.md` Scheduling architecture.
+- [x] **(fixed 2026-08-21 — Step 15)** Server-side appointment
+      duration/slot validation. Previously `start`/`end` were trusted
+      directly from the client with no duration or grid-alignment check.
+      The server now always derives the authoritative end as
+      `start + company.inspectionDurationMinutes` (client `end` is
+      accepted for compatibility but never read) and rejects any
+      duration mismatch (zero/negative/shortened/lengthened) or
+      off-grid/off-hours start. Applies to both booking and reschedule.
+      Verified in `src/lib/scheduling.test.ts` (6 new tests) and
+      `e2e/booking-security.spec.ts` (route-level).
+- [x] **(fixed 2026-08-21 — Step 15)** Inspector validation. A
+      client-supplied `inspectorId` was previously accepted as an opaque,
+      unchecked id. `POST /api/appointments` now looks it up scoped to
+      the company and `active: true`; missing/inactive/cross-tenant ids
+      are rejected with 400 `invalid_inspector`. Verified in
+      `e2e/booking-security.spec.ts` against real inactive and
+      cross-tenant fixture inspectors.
 - [x] Reschedule (in place), cancellation, no-show, completed status
       transitions
 - [x] Inspector field on Appointment (assignment architecture present; no
@@ -117,6 +218,15 @@ before this audit.
 - [ ] Multi-inspector load balancing / assignment rules
 - [ ] Per-inspector `AvailabilityRule` entity (today availability is
       company-wide, not per inspector)
+- [ ] **(gap, audit — 2026-08-21 Codex, not fixed in Step 15)**
+      Business-hours/slot generation (`src/lib/scheduling.ts`) and
+      dashboard "today"/"this week" reporting windows
+      (`src/lib/dashboard-metrics.ts`) interpret boundaries in
+      server-local time, never `company.timezone` (that field is used
+      only for display formatting). Wrong the moment the production
+      host's timezone differs from a company's configured timezone —
+      needs a timezone-aware library (`date-fns-tz`/`Temporal`) in both
+      files.
 - [ ] **(gap, prior)** `Appointment.status = "rescheduled"` and
       `rescheduledFromId` are declared but never set by the reschedule
       action — either start using them or remove them — `docs/STATES.md`
@@ -258,15 +368,37 @@ before this audit.
 ## 15. Testing
 
 - [x] Unit tests: scoring, qualification/service-area,
-      scheduling/double-booking, attribution, analytics, communications
-      consent gating, suppression normalization/tenant-scoping/shared-gate,
-      communication delivery logging (blocked/sent/failed, tenant+lead
-      scoping) (70 tests, `npm run test` — re-verified passing 2026-08-20)
+      scheduling/double-booking/duration/slot-grid, attribution, analytics,
+      communications consent gating, suppression
+      normalization/tenant-scoping/shared-gate, communication delivery
+      logging (blocked/sent/failed, tenant+lead scoping), funnel-ownership
+      capability tokens (issuance/verification, production-secret
+      fail-closed behavior, TTL/expiry, future-dated-token rejection),
+      production-startup env validation (93 tests, `npm run test` —
+      re-verified passing 2026-08-21)
 - [x] End-to-end test of the full required journey — traffic → landing →
       funnel → lead → scoring → MQL/SQL → availability → booking →
       double-booking prevention → CRM/pipeline → inspection completed →
       customer won → dashboard/analytics update (`npx playwright test` —
-      re-verified passing live, 2026-08-20)
+      re-verified passing live, 2026-08-21)
+- [x] **(added 2026-08-21 — Step 15, extended Step 17)** Adversarial
+      end-to-end coverage of public-funnel security
+      (`e2e/booking-security.spec.ts`, 13 scenarios): cross-visitor lead
+      read/mutate rejected, **a caller supplying a victim's `visitorId`
+      while omitting leadId/token cannot continue/mutate the victim's
+      existing lead (the Step 17 continuation-bypass regression test)**,
+      **a valid token for one lead cannot continue a different lead via
+      `POST /api/leads`**, cross-visitor booking rejected, missing/
+      malformed ownership tokens rejected, legitimate continuation/
+      booking still works, two genuinely concurrent booking requests for
+      the same slot never both succeed (`Promise.all`), real
+      daily-capacity exhaustion is rejected, the server-derived
+      appointment duration is used regardless of a malicious client
+      `end`, off-hours/off-grid starts are rejected, inactive and
+      cross-tenant inspectors are rejected. Run live against the real dev
+      DB, re-run to confirm repeatability. Both the Step 15 and Step 17
+      ownership fixes were sanity-checked by temporarily reverting each,
+      confirming its test genuinely fails, then reverting the revert.
 - [x] **(added 2026-08-20 — Step 9)** End-to-end test of durable suppression
       (`e2e/suppression.spec.ts`): opt-out persists, a brand new Lead under a
       new visitorId with the same email/phone stays suppressed and cannot
@@ -283,8 +415,8 @@ before this audit.
       suppressed contact's booking confirmation persists as `blocked` —
       run live against the real dev DB, passing (re-run twice to confirm
       repeatability)
-- [x] Type checking (`npx tsc --noEmit` — 0 errors, 2026-08-20)
-- [x] Linting (`npm run lint` — 0 errors, 2026-08-20)
+- [x] Type checking (`npx tsc --noEmit` — 0 errors, 2026-08-21)
+- [x] Linting (`npm run lint` — 0 errors, 2026-08-21)
 - [ ] Authorization/tenant-isolation tests (only one company exists
       currently, so cross-tenant isolation is architecturally present but
       not yet exercised by a test with two companies). Exception:
@@ -293,9 +425,10 @@ before this audit.
       include `companyId` — this covers the query-construction logic but is
       not a substitute for a real two-company end-to-end test.
 - [ ] Component-level UI tests
-- [ ] **(gap, audit)** Additional e2e scenarios: reschedule flow, lost
-      outcome, no-show, second-company isolation — only the single happy
-      path + one double-booking conflict is currently covered
+- [ ] **(gap, audit)** Additional e2e scenarios still missing: lost
+      outcome, no-show, second-company isolation. Reschedule (and
+      concurrent/capacity booking races) are now covered as of Step 15 —
+      see `e2e/communication-log.spec.ts` and `e2e/booking-security.spec.ts`.
 
 ## 16. Deployment
 

@@ -78,6 +78,7 @@ test("real prospect moves through the full acquisition-to-outcome journey", asyn
   // must not be able to take the exact same slot.
   const secondVisitorId = `e2e-second-${Date.now()}`;
   let secondLeadId: string | null = null;
+  let secondLeadToken: string | null = null;
   for (const answers of [
     { zipCode: "73301" },
     { isHomeowner: true },
@@ -87,19 +88,22 @@ test("real prospect moves through the full acquisition-to-outcome journey", asyn
     { timeline: "asap" },
   ]) {
     const r = await page.request.post("/api/leads", {
-      data: { visitorId: secondVisitorId, leadId: secondLeadId, answers },
+      data: { visitorId: secondVisitorId, leadId: secondLeadId, leadToken: secondLeadToken, answers },
     });
-    secondLeadId = (await r.json()).lead.id;
+    const body = await r.json();
+    secondLeadId = body.lead.id;
+    secondLeadToken = body.leadToken;
   }
   await page.request.post("/api/leads", {
     data: {
       visitorId: secondVisitorId,
       leadId: secondLeadId,
+      leadToken: secondLeadToken,
       contact: { firstName: "Sam", lastName: "Lee", email: `sam.${Date.now()}@example.com`, phone: "+15125550199" },
     },
   });
   const conflictRes = await page.request.post("/api/appointments", {
-    data: { leadId: secondLeadId, start: scheduledStart, end: scheduledEnd },
+    data: { leadId: secondLeadId, leadToken: secondLeadToken, start: scheduledStart, end: scheduledEnd },
   });
   expect(conflictRes.status()).toBe(409);
 

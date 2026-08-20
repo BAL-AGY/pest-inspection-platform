@@ -12,6 +12,7 @@ import {
   attributionFromLocation,
   getOrCreateVisitorId,
   storeLeadId,
+  storeLeadToken,
   track,
 } from "@/lib/visitor";
 
@@ -19,13 +20,19 @@ type Stage = "questions" | "contact" | "scheduler" | "confirmed" | "not-eligible
 
 interface LeadState {
   id: string | null;
+  token: string | null;
   classification: "prospect" | "mql" | "sql";
   inServiceArea: boolean | null;
 }
 
 export default function InspectionFunnelPage() {
   const [answers, setAnswers] = useState<QualificationAnswers>({});
-  const [lead, setLead] = useState<LeadState>({ id: null, classification: "prospect", inServiceArea: null });
+  const [lead, setLead] = useState<LeadState>({
+    id: null,
+    token: null,
+    classification: "prospect",
+    inServiceArea: null,
+  });
   const [stage, setStage] = useState<Stage>("questions");
   const [submitting, setSubmitting] = useState(false);
   const [contact, setContact] = useState({ firstName: "", lastName: "", email: "", phone: "" });
@@ -51,6 +58,7 @@ export default function InspectionFunnelPage() {
         body: JSON.stringify({
           visitorId: getOrCreateVisitorId(),
           leadId: lead.id,
+          leadToken: lead.token,
           answers: next,
           attribution: attributionFromLocation(),
         }),
@@ -59,10 +67,12 @@ export default function InspectionFunnelPage() {
       if (data.lead?.id) {
         setLead({
           id: data.lead.id,
+          token: data.leadToken,
           classification: data.lead.classification,
           inServiceArea: data.inServiceArea,
         });
         storeLeadId(data.lead.id);
+        storeLeadToken(data.leadToken);
       }
       if (isFunnelComplete(next)) {
         setStage("contact");
@@ -88,6 +98,7 @@ export default function InspectionFunnelPage() {
         body: JSON.stringify({
           visitorId: getOrCreateVisitorId(),
           leadId: lead.id,
+          leadToken: lead.token,
           contact,
           smsConsent: consent.sms,
           emailConsent: consent.email,
@@ -97,11 +108,13 @@ export default function InspectionFunnelPage() {
       const data = await res.json();
       const classification = data.lead?.classification as LeadState["classification"];
       const inServiceArea = data.inServiceArea as boolean | null;
-      setLead({ id: data.lead.id, classification, inServiceArea });
+      setLead({ id: data.lead.id, token: data.leadToken, classification, inServiceArea });
+      storeLeadId(data.lead.id);
+      storeLeadToken(data.leadToken);
 
       if (classification === "sql" && inServiceArea) {
         setStage("scheduler");
-        await loadSlots(data.lead.id);
+        await loadSlots(data.lead.id, data.leadToken);
       } else {
         setStage("not-eligible");
       }
@@ -110,9 +123,11 @@ export default function InspectionFunnelPage() {
     }
   }
 
-  async function loadSlots(leadId: string) {
+  async function loadSlots(leadId: string, leadToken: string | null) {
     setSlotsError(null);
-    const res = await fetch(`/api/availability?leadId=${leadId}`);
+    const res = await fetch(`/api/availability?leadId=${leadId}`, {
+      headers: leadToken ? { "X-Funnel-Token": leadToken } : {},
+    });
     const data = await res.json();
     if (!res.ok) {
       setSlotsError(data.reason ?? "No availability right now.");
@@ -122,7 +137,7 @@ export default function InspectionFunnelPage() {
   }
 
   async function bookSlot() {
-    if (!selectedSlot || !lead.id) return;
+    if (!selectedSlot || !lead.id || !lead.token) return;
     setBookingError(null);
     setSubmitting(true);
     try {
@@ -131,12 +146,12 @@ export default function InspectionFunnelPage() {
       const res = await fetch("/api/appointments", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ leadId: lead.id, start: slot.start, end: slot.end }),
+        body: JSON.stringify({ leadId: lead.id, leadToken: lead.token, start: slot.start, end: slot.end }),
       });
       const data = await res.json();
       if (!res.ok) {
         setBookingError(data.reason ?? "That time is no longer available. Please pick another.");
-        await loadSlots(lead.id);
+        await loadSlots(lead.id, lead.token);
         return;
       }
       setConfirmedWhen(

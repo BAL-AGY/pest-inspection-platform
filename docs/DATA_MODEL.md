@@ -142,8 +142,32 @@ Inspection booking: `leadId`, `inspectorId` (nullable — no inspector
 required at booking time), `scheduledStart/End`, `status`
 (`docs/STATES.md`), `completedAt`, `cancelledAt`,
 `rescheduledFromId` (declared, currently unused — no code path sets it).
-`@@unique([inspectorId, scheduledStart])` is the DB-level double-booking
-guard behind the app-level check in `src/lib/scheduling.ts`.
+
+**Double-booking guard, fixed 2026-08-21 (Step 15).** The DB-level guard
+used to be `@@unique([inspectorId, scheduledStart])`, but it provided no
+real protection: every booking has `inspectorId = null` (no per-inspector
+calendars exist), and SQL unique indexes treat NULLs as distinct, so
+multiple null-inspector rows at the same `scheduledStart` never actually
+violated it — the double-booking prevention that existed before this fix
+relied entirely on a non-atomic check-then-insert read in the route
+handler. It is now a **partial unique index** on
+`(companyId, scheduledStart)`, filtered to `status IN ('booked',
+'rescheduled')`, added via raw SQL in migration
+`20260820220719_atomic_booking_slot_guard` (not expressible as a Prisma
+`@@unique` — the schema DSL has no filtered-index construct; see the
+`Appointment` model's comment in `prisma/schema.prisma`). Scoped by
+`companyId` rather than `inspectorId` to match the app's actual
+single-shared-calendar model (`src/lib/scheduling.ts`'s overlap check is
+already company-wide, not per-inspector); filtered to active statuses so
+a cancelled appointment doesn't permanently block re-booking that slot.
+Verified empirically against this environment's SQLite (two concurrent
+active bookings at the same slot: one succeeds, one gets Prisma `P2002`;
+cancelling and re-booking the same slot succeeds; two cancelled rows at
+the same slot coexist) and via `e2e/booking-security.spec.ts`'s real
+concurrent-request test. See `docs/ARCHITECTURE.md` Scheduling
+architecture for what remains PostgreSQL-specific and unverified (the
+capacity-per-day race, as opposed to the same-slot race, which this index
+does not close).
 
 ### Inspector
 Minimal: `name`, `email`, `phone`, `active`. No linkage to

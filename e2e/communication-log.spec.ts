@@ -27,6 +27,7 @@ async function createSqlLead(
   contact: { firstName: string; lastName: string; email: string; phone: string },
 ) {
   let leadId: string | null = null;
+  let leadToken: string | null = null;
   for (const answers of [
     { zipCode: "73301" },
     { isHomeowner: true },
@@ -35,18 +36,22 @@ async function createSqlLead(
     { hasExistingProvider: false },
     { timeline: "asap" },
   ]) {
-    const r = await page.request.post("/api/leads", { data: { visitorId, leadId, answers } });
-    leadId = (await r.json()).lead.id;
+    const r = await page.request.post("/api/leads", { data: { visitorId, leadId, leadToken, answers } });
+    const body = await r.json();
+    leadId = body.lead.id;
+    leadToken = body.leadToken;
   }
   const r = await page.request.post("/api/leads", {
-    data: { visitorId, leadId, contact, smsConsent: true, emailConsent: true },
+    data: { visitorId, leadId, leadToken, contact, smsConsent: true, emailConsent: true },
   });
   const body = await r.json();
-  return body.lead.id as string;
+  return { leadId: body.lead.id as string, leadToken: body.leadToken as string };
 }
 
-async function firstAvailableSlot(page: import("@playwright/test").Page, leadId: string) {
-  const r = await page.request.get(`/api/availability?leadId=${leadId}`);
+async function firstAvailableSlot(page: import("@playwright/test").Page, leadId: string, leadToken: string) {
+  const r = await page.request.get(`/api/availability?leadId=${leadId}`, {
+    headers: { "X-Funnel-Token": leadToken },
+  });
   const body = await r.json();
   return body.slots[0] as { start: string; end: string };
 }
@@ -69,7 +74,7 @@ test.describe("communication delivery log", () => {
     await page.getByRole("button", { name: /sign in/i }).click();
     await expect(page).toHaveURL(/\/dashboard/);
 
-    const leadId = await createSqlLead(page, `e2e-comm-log-${stamp}`, {
+    const { leadId, leadToken } = await createSqlLead(page, `e2e-comm-log-${stamp}`, {
       firstName: "Riley",
       lastName: "Booker",
       email: `riley.${stamp}@example.com`,
@@ -77,9 +82,9 @@ test.describe("communication delivery log", () => {
     });
 
     // 1. Book — should persist a SENT appointment_confirmation record.
-    const slot = await firstAvailableSlot(page, leadId);
+    const slot = await firstAvailableSlot(page, leadId, leadToken);
     const bookRes = await page.request.post("/api/appointments", {
-      data: { leadId, start: slot.start, end: slot.end },
+      data: { leadId, leadToken, start: slot.start, end: slot.end },
     });
     expect(bookRes.status()).toBe(200);
     const appointmentId: string = (await bookRes.json()).appointment.id;
@@ -95,7 +100,7 @@ test.describe("communication delivery log", () => {
     }
 
     // 2. Reschedule — should persist a SENT appointment_rescheduled record.
-    const nextSlot = await firstAvailableSlot(page, leadId);
+    const nextSlot = await firstAvailableSlot(page, leadId, leadToken);
     const rescheduleRes = await page.request.patch(`/api/appointments/${appointmentId}`, {
       data: { action: "reschedule", start: nextSlot.start, end: nextSlot.end },
     });
@@ -129,7 +134,7 @@ test.describe("communication delivery log", () => {
     await page.getByRole("button", { name: /sign in/i }).click();
     await expect(page).toHaveURL(/\/dashboard/);
 
-    const leadId = await createSqlLead(page, `e2e-comm-log-blocked-${stamp}`, {
+    const { leadId, leadToken } = await createSqlLead(page, `e2e-comm-log-blocked-${stamp}`, {
       firstName: "Sam",
       lastName: "Suppressed",
       email: `sam.suppressed.${stamp}@example.com`,
@@ -142,9 +147,9 @@ test.describe("communication delivery log", () => {
     // Booking still succeeds (opting out blocks marketing sends, not the
     // ability to book/manage an appointment) but the confirmation send
     // must be blocked and logged as such.
-    const slot = await firstAvailableSlot(page, leadId);
+    const slot = await firstAvailableSlot(page, leadId, leadToken);
     const bookRes = await page.request.post("/api/appointments", {
-      data: { leadId, start: slot.start, end: slot.end },
+      data: { leadId, leadToken, start: slot.start, end: slot.end },
     });
     expect(bookRes.status()).toBe(200);
 

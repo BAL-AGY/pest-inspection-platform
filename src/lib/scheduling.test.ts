@@ -107,6 +107,7 @@ describe("assertSlotBookable", () => {
         existingAppointments: [],
         businessHours: DEFAULT_BUSINESS_HOURS,
         maxDailyInspections: 8,
+        durationMinutes: 60,
         now: NOW,
       }),
     ).not.toThrow();
@@ -119,6 +120,7 @@ describe("assertSlotBookable", () => {
         existingAppointments: [{ start: nextDay(1, 9), end: nextDay(1, 10) }],
         businessHours: DEFAULT_BUSINESS_HOURS,
         maxDailyInspections: 8,
+        durationMinutes: 60,
         now: NOW,
       }),
     ).toThrow(DoubleBookingError);
@@ -131,6 +133,7 @@ describe("assertSlotBookable", () => {
         existingAppointments: [],
         businessHours: DEFAULT_BUSINESS_HOURS,
         maxDailyInspections: 8,
+        durationMinutes: 60,
         now: NOW,
       }),
     ).toThrow(/business hours/);
@@ -143,6 +146,7 @@ describe("assertSlotBookable", () => {
         existingAppointments: [],
         businessHours: DEFAULT_BUSINESS_HOURS,
         maxDailyInspections: 8,
+        durationMinutes: 60,
         now: NOW,
       }),
     ).toThrow(/business hours/);
@@ -155,6 +159,7 @@ describe("assertSlotBookable", () => {
         existingAppointments: [],
         businessHours: DEFAULT_BUSINESS_HOURS,
         maxDailyInspections: 8,
+        durationMinutes: 60,
         now: NOW,
       }),
     ).toThrow(/past/);
@@ -167,8 +172,74 @@ describe("assertSlotBookable", () => {
         existingAppointments: [{ start: nextDay(1, 9), end: nextDay(1, 10) }],
         businessHours: DEFAULT_BUSINESS_HOURS,
         maxDailyInspections: 1,
+        durationMinutes: 60,
         now: NOW,
       }),
     ).toThrow(/capacity/);
+  });
+
+  it("rejects zero-duration timing (start === end)", () => {
+    expect(() =>
+      assertSlotBookable({
+        requested: { start: nextDay(1, 9), end: nextDay(1, 9) },
+        existingAppointments: [],
+        businessHours: DEFAULT_BUSINESS_HOURS,
+        maxDailyInspections: 8,
+        durationMinutes: 60,
+        now: NOW,
+      }),
+    ).toThrow(/duration/);
+  });
+
+  it("rejects negative-duration timing (end before start)", () => {
+    expect(() =>
+      assertSlotBookable({
+        requested: { start: nextDay(1, 10), end: nextDay(1, 9) },
+        existingAppointments: [],
+        businessHours: DEFAULT_BUSINESS_HOURS,
+        maxDailyInspections: 8,
+        durationMinutes: 60,
+        now: NOW,
+      }),
+    ).toThrow(/duration/);
+  });
+
+  it("rejects a shortened appointment that doesn't match the configured duration", () => {
+    expect(() =>
+      assertSlotBookable({
+        requested: { start: nextDay(1, 9), end: nextDay(1, 9, 5) },
+        existingAppointments: [],
+        businessHours: DEFAULT_BUSINESS_HOURS,
+        maxDailyInspections: 8,
+        durationMinutes: 60,
+        now: NOW,
+      }),
+    ).toThrow(/duration/);
+  });
+
+  it("rejects a lengthened appointment that doesn't match the configured duration", () => {
+    expect(() =>
+      assertSlotBookable({
+        requested: { start: nextDay(1, 9), end: nextDay(1, 15) },
+        existingAppointments: [],
+        businessHours: DEFAULT_BUSINESS_HOURS,
+        maxDailyInspections: 8,
+        durationMinutes: 60,
+        now: NOW,
+      }),
+    ).toThrow(/duration/);
+  });
+
+  it("rejects a start time that doesn't align to the slot grid", () => {
+    expect(() =>
+      assertSlotBookable({
+        requested: { start: nextDay(1, 9, 7), end: nextDay(1, 10, 7) },
+        existingAppointments: [],
+        businessHours: DEFAULT_BUSINESS_HOURS,
+        maxDailyInspections: 8,
+        durationMinutes: 60,
+        now: NOW,
+      }),
+    ).toThrow(/align/);
   });
 });

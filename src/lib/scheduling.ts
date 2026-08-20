@@ -116,24 +116,51 @@ export class DoubleBookingError extends Error {
   }
 }
 
+export class CapacityExceededError extends Error {
+  constructor() {
+    super("No inspection capacity remains for that day.");
+    this.name = "CapacityExceededError";
+  }
+}
+
 /**
  * Validates a requested booking against existing appointments before the
- * caller persists it. The DB also enforces a unique (inspectorId,
- * scheduledStart) constraint as a last-resort guard against races; this
- * function is the primary, testable business-rule check.
+ * caller persists it. A partial unique DB index on
+ * (companyId, scheduledStart) for active-status appointments is the final,
+ * atomic guard against races (see prisma/schema.prisma's Appointment model
+ * comment); this function is the primary, testable business-rule check —
+ * and the only place that must reject a duration/slot-alignment that
+ * doesn't match what the company actually offers.
+ *
+ * `requested.end` is trusted only to the extent that it must exactly equal
+ * `requested.start + durationMinutes` — callers must derive it themselves
+ * from the company's configured duration, never from client input, so a
+ * caller can't submit a zero, negative, shortened, or lengthened
+ * appointment. `requested.start` must also land exactly on the slot grid
+ * `generateCandidateSlots` would produce (business-hours-open plus a whole
+ * number of `durationMinutes` increments) — this rejects times a client
+ * fabricates outside the actual bookable grid.
  */
 export function assertSlotBookable(params: {
   requested: TimeRange;
   existingAppointments: TimeRange[];
   businessHours: BusinessHours;
   maxDailyInspections: number;
+  durationMinutes: number;
   now?: Date;
 }): void {
-  const { requested, existingAppointments, businessHours, maxDailyInspections } = params;
+  const { requested, existingAppointments, businessHours, maxDailyInspections, durationMinutes } =
+    params;
   const now = params.now ?? new Date();
 
   if (requested.start <= now) {
     throw new Error("Cannot book an appointment in the past.");
+  }
+
+  const durationMs = durationMinutes * 60_000;
+  const actualDurationMs = requested.end.getTime() - requested.start.getTime();
+  if (actualDurationMs !== durationMs) {
+    throw new Error("Appointment duration does not match the configured inspection duration.");
   }
 
   const hours = businessHours[requested.start.getDay()];
@@ -150,6 +177,11 @@ export function assertSlotBookable(params: {
     throw new Error("Selected time is outside business hours.");
   }
 
+  const offsetMs = requested.start.getTime() - dayOpen.getTime();
+  if (offsetMs % durationMs !== 0) {
+    throw new Error("Selected time does not align to a valid inspection slot.");
+  }
+
   const overlaps = existingAppointments.some((a) => rangesOverlap(requested, a));
   if (overlaps) {
     throw new DoubleBookingError();
@@ -162,6 +194,6 @@ export function assertSlotBookable(params: {
       a.start.getDate() === requested.start.getDate(),
   ).length;
   if (sameDayCount >= maxDailyInspections) {
-    throw new Error("No inspection capacity remains for that day.");
+    throw new CapacityExceededError();
   }
 }

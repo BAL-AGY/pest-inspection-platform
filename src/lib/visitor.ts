@@ -2,6 +2,7 @@
 
 const VISITOR_KEY = "pip_visitor_id";
 const LEAD_KEY = "pip_lead_id";
+const LEAD_TOKEN_KEY = "pip_lead_token";
 
 export function getOrCreateVisitorId(): string {
   if (typeof window === "undefined") return "";
@@ -21,6 +22,22 @@ export function getStoredLeadId(): string | null {
 export function storeLeadId(id: string) {
   if (typeof window === "undefined") return;
   window.localStorage.setItem(LEAD_KEY, id);
+}
+
+/**
+ * The server-issued ownership capability for the current lead
+ * (src/lib/funnel-capability.ts) — required on every subsequent request
+ * that references a `leadId`, so a bare leadId is never sufficient proof
+ * of ownership on its own.
+ */
+export function getStoredLeadToken(): string | null {
+  if (typeof window === "undefined") return null;
+  return window.localStorage.getItem(LEAD_TOKEN_KEY);
+}
+
+export function storeLeadToken(token: string) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(LEAD_TOKEN_KEY, token);
 }
 
 export async function track(

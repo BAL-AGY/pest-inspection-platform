@@ -3,10 +3,15 @@ import { prisma } from "@/lib/prisma";
 import { getActiveCompany, parseBusinessHours, parseServiceZipCodes } from "@/lib/company";
 import { generateCandidateSlots, filterAvailableSlots } from "@/lib/scheduling";
 import { isInServiceArea } from "@/lib/qualification";
+import { verifyLeadToken } from "@/lib/funnel-capability";
 
 export async function GET(req: NextRequest) {
   const leadId = req.nextUrl.searchParams.get("leadId");
   const days = Number(req.nextUrl.searchParams.get("days") ?? "14");
+  // Sent as a header, not a query param, so it doesn't end up in browser
+  // history / server access logs the way the leadId query param already
+  // does (see src/lib/funnel-capability.ts).
+  const leadToken = req.headers.get("x-funnel-token");
 
   if (!leadId) {
     return NextResponse.json({ error: "leadId is required" }, { status: 400 });
@@ -15,6 +20,14 @@ export async function GET(req: NextRequest) {
   const company = await getActiveCompany();
   const lead = await prisma.lead.findFirst({ where: { id: leadId, companyId: company.id } });
   if (!lead) return NextResponse.json({ error: "Lead not found" }, { status: 404 });
+
+  const owns = verifyLeadToken({
+    companyId: company.id,
+    leadId: lead.id,
+    visitorId: lead.visitorId ?? "",
+    token: leadToken,
+  });
+  if (!owns) return NextResponse.json({ error: "forbidden" }, { status: 403 });
 
   const serviceZipCodes = parseServiceZipCodes(company);
   const inArea = isInServiceArea(lead.zipCode ?? undefined, serviceZipCodes);

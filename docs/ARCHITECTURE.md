@@ -136,13 +136,212 @@ data renders as unavailable, not zero.
 
 Pure, DB-free candidate-slot generation and conflict-checking in
 `src/lib/scheduling.ts` (business hours × duration × existing bookings ×
-daily capacity), wrapped by `POST /api/appointments` and
-`GET /api/availability` for persistence. Double-booking is prevented twice:
-an application-level overlap check before write, and a DB-level
-`@@unique([inspectorId, scheduledStart])` constraint as the race guard,
-both exercised in `e2e/full-funnel.spec.ts`. Full transition detail
-(including two inconsistencies between the declared and actual appointment
-states): `docs/STATES.md`.
+daily capacity), wrapped by `POST /api/appointments`,
+`PATCH /api/appointments/[id]` (`action: "reschedule"`), and
+`GET /api/availability` for persistence. Full transition detail (including
+two inconsistencies between the declared and actual appointment states):
+`docs/STATES.md`.
+
+**Concurrency and validation rework (2026-08-21, Step 15).** An
+independent audit (Codex) flagged, and direct code inspection confirmed,
+that the previous double-booking guard didn't actually work, and that
+appointment timing wasn't validated server-side at all. Both are fixed:
+
+- **Atomic double-booking guard.** The DB-level guard used to be
+  `@@unique([inspectorId, scheduledStart])`. This provided *no real
+  protection*: every booking has `inspectorId = null` (no per-inspector
+  calendars exist — see Inspector below), and SQL unique indexes treat
+  NULLs as distinct, so multiple null-inspector rows at the identical
+  `scheduledStart` never violated it. Double-booking prevention rested
+  entirely on a non-atomic check-then-insert read in the route handler,
+  which a genuinely concurrent request could beat. It is now a **partial
+  unique index** on `(companyId, scheduledStart)`, filtered to
+  `status IN ('booked', 'rescheduled')`, added by raw SQL in migration
+  `20260820220719_atomic_booking_slot_guard` (Prisma's schema DSL has no
+  filtered/partial-index construct, so it's not a `@@unique` in
+  `prisma/schema.prisma` — see that model's comment). Scoped by
+  `companyId` rather than `inspectorId` to match the app's actual
+  single-shared-calendar model (the overlap check in
+  `assertSlotBookable` is already company-wide, not per-inspector);
+  filtered to active statuses so a cancelled appointment doesn't
+  permanently block re-booking that slot. **Verified**: a standalone
+  script confirmed the exact behavior against this environment's SQLite
+  (two concurrent active bookings at the same slot → one succeeds, one
+  throws Prisma `P2002`; cancel-then-rebook the same slot succeeds; two
+  cancelled rows at the same slot coexist) — see
+  `docs/DATA_MODEL.md` Appointment. `e2e/booking-security.spec.ts` fires
+  two genuinely concurrent `POST /api/appointments` requests at the same
+  slot via `Promise.all` and asserts exactly one succeeds.
+- **In-transaction re-check + capacity mitigation.** Both booking and
+  reschedule now re-run `assertSlotBookable` a second time *inside* the
+  `$transaction`, immediately before the write, using
+  `Prisma.TransactionIsolationLevel.Serializable`. This closes almost all
+  of the TOCTOU window for both the same-slot race (also closed
+  atomically by the partial index above, independent of isolation level)
+  and the **daily-capacity race** (two concurrent bookings at *different*
+  times on a day already at `maxDailyInspections - 1`, which the partial
+  unique index does not cover — capacity is a per-day count invariant,
+  not a per-row uniqueness invariant). **`Serializable` was confirmed to
+  be accepted by Prisma against this environment's SQLite without
+  erroring**, but SQLite does not implement PostgreSQL's true
+  serializable-snapshot conflict detection, so the capacity race is
+  **not provably closed under this environment** — only the same-slot
+  race is provably atomic here. **This must be verified against real
+  PostgreSQL before production launch**: fire concurrent bookings that
+  would jointly exceed daily capacity and confirm one is rejected with a
+  Prisma `P2034` (PostgreSQL serialization-conflict error, which the
+  route already catches and maps to a 409) or that the in-transaction
+  re-check alone is sufficient at expected traffic levels. This is
+  deliberately not claimed as proven — see CLAUDE.md's instruction not to
+  fabricate what hasn't been verified.
+- **Server-derived, authoritative appointment timing.** `start`/`end`
+  used to be trusted directly from the client on both booking and
+  reschedule. The server now always derives the authoritative end as
+  `start + company.inspectionDurationMinutes`, ignoring any client-
+  supplied `end` entirely (it's still accepted in the request schema for
+  backward/display compatibility, just never read). `assertSlotBookable`
+  additionally rejects any `requested` range whose duration doesn't
+  exactly equal the company's configured duration (closing zero/negative/
+  shortened/lengthened appointments) and any `start` that doesn't align
+  to the exact slot grid `generateCandidateSlots` would produce (business
+  hours open time + a whole number of duration increments) — closing
+  "arbitrary" times a client fabricates outside the real bookable grid.
+- **Inspector validation.** A client-supplied `inspectorId` is now looked
+  up scoped to the resolved company and `active: true` before use;
+  missing/inactive/cross-tenant ids are rejected with 400
+  `invalid_inspector`. Previously accepted as an opaque, unchecked id.
+
+See `e2e/booking-security.spec.ts` for the adversarial route-level proof
+of all of the above (not just the underlying pure functions, which
+`src/lib/scheduling.test.ts` covers separately).
+
+### Public funnel ownership (IDOR fix, 2026-08-21 Step 15; continuation-bypass + secret/lifetime hardening, 2026-08-21 Step 17)
+
+**Step 15.** An independent audit found that every public, unauthenticated
+`leadId`-scoped route (`POST /api/leads` continuation, `POST
+/api/appointments`, `GET /api/availability`) trusted a bare `leadId` as
+proof of ownership — confirmed by direct inspection: the lookup was
+scoped by `{ id: leadId, companyId }` with no check that the caller was
+the visitor who created that lead. Anyone who obtained a lead's id (a
+log, a shared device, or the fact that `GET /api/availability?leadId=`
+put it in the URL/browser history) could rewrite that lead's contact info
+and consent, or book/consume its inspection slot. Fixed with
+`src/lib/funnel-capability.ts`: an HMAC-signed capability token, derived
+from the lead's *actual, server-side* `visitorId` (never the caller's
+claimed one), required on every subsequent request that references a
+`leadId` (`leadToken` in the JSON body for `POST /api/leads` and `POST
+/api/appointments`; an `X-Funnel-Token` header, not a query param, for
+`GET /api/availability`, so it doesn't leak into browser history/access
+logs the way `leadId` itself already does). A missing or wrong token is
+rejected as 403 `forbidden`.
+
+**Step 17 — continuation bypass, found by a second independent review of
+the Step 15 work.** `POST /api/leads`' "no `leadId` supplied" branch
+still looked up **any existing lead by `visitorId` alone**
+(`prisma.lead.findFirst({ where: { companyId, visitorId } })`) with *no
+token check at all* — a caller who knew or supplied a victim's
+`visitorId` could omit `leadId` entirely, and the server would find,
+mutate, and hand back a **fresh, valid token for the victim's own lead**.
+This meant the IDOR was only partially closed: a leaked `leadId` alone no
+longer worked, but a leaked/guessed `visitorId` alone still did, and
+compounded the exposure by minting the attacker a working credential
+afterward. Root cause: that branch was written to resolve "is there
+already a lead for this visitor" without distinguishing *true first-time
+creation* (nothing to protect yet — safe to trust `visitorId`) from
+*continuing a lead that already exists* (must be authenticated the same
+way the `leadId` branch already is).
+
+**Fix**: when `leadId` is omitted, the request is now *unconditionally*
+treated as "create a new lead" — `existing` is never populated from a
+`visitorId`-only lookup, regardless of whether a prior lead already
+exists for that visitor. Continuing an existing lead always requires
+`leadId` + a valid `leadToken`; there is no other path. A forged
+`visitorId` matching a real victim now just creates a second, harmless,
+unrelated `Lead` row (nothing enforces `visitorId` uniqueness, and
+nothing downstream assumes one visitor maps to at most one lead) — it can
+no longer read, mutate, or obtain a working token for the victim's actual
+lead. The one accepted trade-off: a genuine first-question double-submit
+(e.g. a network retry before the client has received `leadId` back) now
+creates two `Lead` rows instead of being silently deduplicated by the old
+`visitorId` lookup. This is a data-quality nicety, not a security
+property, and real idempotency (e.g. a client-supplied idempotency key)
+is the correct later fix if it proves to matter in practice — not
+implemented here to keep this change scoped to the security fix.
+`e2e/booking-security.spec.ts` proves the exact exploit fails (sanity-
+checked by temporarily reverting the fix and confirming the test
+genuinely fails, then re-applying it).
+
+**Production secret behavior (Step 17).** `getSecret()` in
+`src/lib/funnel-capability.ts` now fails closed: in production
+(`NODE_ENV=production`) `FUNNEL_CAPABILITY_SECRET` is required with **no
+fallback whatsoever** — reusing `AUTH_SECRET` is dev/test-only
+convenience, gated strictly to non-production, because (a) it would
+couple two unrelated trust domains (staff session signing vs. anonymous
+funnel ownership — rotating one would unintentionally affect the other)
+and (b) it risks a well-known development placeholder value reaching
+production undetected. This is enforced twice: at every request
+(`getSecret()` throws before any token is issued/verified) and at process
+startup, via `src/instrumentation.ts`'s `register()` hook (Next.js's
+[instrumentation](https://nextjs.org/docs/app/guides/instrumentation)
+convention — runs once when the server boots, before any request is
+served), which throws immediately if `FUNNEL_CAPABILITY_SECRET` is unset
+in production. The startup check exists so a misconfigured production
+deploy fails at boot/health-check time, not silently on the first real
+homeowner's request. The secret is never logged (thrown errors describe
+*that* it's missing, never echo any secret value) and is never imported
+from client code — `funnel-capability.ts` is documented server-only and
+is only ever imported from `src/app/api/**` route handlers; Next.js also
+never bundles non-`NEXT_PUBLIC_`-prefixed env vars into client JS as a
+structural backstop.
+
+**Token lifetime and storage (Step 17).** Tokens are no longer purely
+deterministic — they now embed a plaintext-but-HMAC-covered `issuedAt`
+timestamp (`{issuedAtMs}.{signature}`) and are rejected once older than
+`LEAD_TOKEN_TTL_MS` (4 hours) or if the timestamp claims to be in the
+future (tamper detection). Every successful lead-scoped response
+re-issues a fresh token, so an actively continuing visitor never
+approaches the limit in practice — the TTL only bounds how long a token
+that leaked some other way (logs, a shared device, an XSS bug elsewhere
+on the page) remains replayable after the fact. **Known, deliberately
+undeferred limitation**: the client still stores this token in
+`localStorage` (`src/lib/visitor.ts`), which does not meaningfully
+protect against an *active* XSS attacker — such an attacker can issue
+authenticated requests directly from injected JS without ever needing to
+read the token value first, and TTL doesn't change that. What TTL +
+localStorage together provide is a bounded (not indefinite) window for a
+token that leaked *outside* an active XSS session. The correct stronger
+fix — not implemented in this pass, to avoid redesigning the funnel's
+request/response contract in the same change that fixed the IDOR,
+continuation bypass, and concurrency/duration bugs — is an `httpOnly`,
+`Secure`, `SameSite=Lax` cookie set by the server, which at minimum
+prevents *exfiltrating* the token for reuse outside the compromised
+page/session; it would also need CSRF-aware design, since cookies are
+attached automatically by the browser (unlike the current explicit
+header/body token, which an XSS-driven same-origin fetch could read from
+`localStorage` and use identically to a stolen cookie's in-session
+abuse-case, but which a cross-origin CSRF attempt cannot forge without
+XSS). This is flagged as the recommended next step, not implemented here.
+
+Deliberately **not** protected by any of this: `POST /api/track`
+(fire-and-forget client-side analytics event ingestion). It accepts an
+optional `leadId` too, but only ever *writes* an informational
+`FunnelEvent` row referencing it — it never reads or mutates lead data
+back to the caller, so the worst case of a forged `leadId` there is
+analytics pollution, not a confidentiality/integrity breach. Out of scope
+for this fix; flagged here so it isn't mistaken for an oversight.
+
+Authenticated staff routes (everything under `requireSession()`) were
+never affected by any of this and are untouched — they already scope
+every query by `session.companyId` from the JWT, independent of any
+client-supplied id.
+
+A full re-audit of every route accepting `leadId`, `visitorId`,
+`companyId`, or a funnel token (Step 17) found no other instance of this
+bypass pattern: `POST /api/appointments` and `GET /api/availability`
+both *require* `leadId` (no visitorId-fallback branch exists in either),
+and `companyId` is never client-supplied anywhere in the public routes
+(always resolved via `getActiveCompany()`) or the staff routes (always
+`session.companyId`).
 
 ### Messaging provider abstraction
 
@@ -230,6 +429,9 @@ prisma/
   seed.ts               Seeds one Company + default Inspector for local/dev
 
 src/
+  instrumentation.ts    Startup hook — fails fast in production if
+                          FUNNEL_CAPABILITY_SECRET is unset
+  instrumentation.test.ts  Vitest coverage for the above
   app/
     page.tsx             Public landing page ("/")
     inspection/page.tsx  Qualification funnel + booking flow
@@ -262,9 +464,11 @@ src/
     pipeline.ts              Canonical status/event-type string unions (single source of truth)
     qualification.ts         Question set, next-question logic, service-area check
     scoring.ts                Configurable scoring rules, classification
-    scheduling.ts             Slot generation, conflict/capacity checks
+    scheduling.ts             Slot generation, conflict/capacity/duration checks
+    funnel-capability.ts        Public lead-ownership HMAC capability tokens
+                                  (production-gated secret, TTL/expiry)
     attribution.ts             UTM/click-id/referrer parsing
-    visitor.ts                 Client-side visitor/lead id + track() helper
+    visitor.ts                 Client-side visitor/lead id/token + track() helper
     communications.ts          Provider abstraction, consent gate, templates
     suppression.ts                Durable cross-lead suppression + shared send gate
     communication-log.ts           Persists a Communication row per send attempt
@@ -281,6 +485,9 @@ e2e/
   communication-log.spec.ts  Playwright: booking/reschedule/cancel each
                            persist a communication record; a suppressed
                            contact's send is persisted as blocked
+  booking-security.spec.ts  Playwright: IDOR/ownership adversarial tests,
+                           genuinely concurrent double-booking, capacity
+                           exhaustion, duration/slot/inspector validation
 
 docs/
   ARCHITECTURE.md   This file — stack + system architecture decision record
@@ -376,6 +583,71 @@ priority:
    `cta_clicked` and `assessment_step_completed` are not implemented, so
    CTA effectiveness and in-funnel step drop-off aren't measurable yet.
    → `docs/EVENTS.md`.
+10. ~~**Public `leadId`-scoped routes had no ownership check (IDOR).**~~
+    **Fixed 2026-08-21 (Step 15), with a continuation-bypass gap found by
+    a second independent review and fixed the same day (Step 17).** The
+    Step 15 fix closed the `leadId`-alone bypass but left a second one:
+    `POST /api/leads`' "no leadId" branch still looked up and mutated any
+    existing lead by `visitorId` alone, with no token check, and handed
+    the caller a fresh valid token for it. Fixed by treating "no leadId"
+    as unconditionally "create new" — never a `visitorId`-based
+    reattachment to an existing lead. See "Public funnel ownership" above
+    and `src/lib/funnel-capability.ts`. Also hardened in Step 17:
+    `FUNNEL_CAPABILITY_SECRET` now fails closed in production (no
+    `AUTH_SECRET` fallback, enforced at both startup via
+    `src/instrumentation.ts` and per-request), and tokens now expire
+    (`LEAD_TOKEN_TTL_MS`, 4 hours) instead of being valid indefinitely.
+11. ~~**Double-booking guard didn't actually work; no server-side
+    duration/slot validation.**~~ **Fixed 2026-08-21 (Step 15), with one
+    honestly-documented residual gap.** See the Scheduling architecture
+    section above. The same-slot race is provably atomic (partial unique
+    DB index, verified against this environment's SQLite). The
+    **daily-capacity race under genuinely concurrent PostgreSQL
+    transactions is not provably closed** — the in-transaction
+    `Serializable`-isolation re-check is the strongest architecture
+    implemented, but SQLite can't prove PostgreSQL's serialization-conflict
+    behavior. **Must be verified against real PostgreSQL before
+    production launch** — see Scheduling architecture above for the exact
+    test to run.
+12. **Funnel capability tokens are stored in `localStorage`, not an
+    `httpOnly` cookie** (confirmed, Step 17 — see "Public funnel
+    ownership" above for the full analysis). This does not meaningfully
+    weaken the token against an *active* same-origin XSS attacker (who
+    can issue authenticated requests directly, without needing to read
+    the token), but it does mean a token that leaks some other way is
+    exfiltratable and reusable outside the page/session that received it,
+    until it expires (bounded now by the Step 17 TTL fix, previously
+    unbounded). Recommended fix: move to an `httpOnly`, `Secure`,
+    `SameSite=Lax` cookie with CSRF-aware design — deliberately not
+    implemented in Step 17 to avoid redesigning the funnel's
+    request/response contract in the same change as the IDOR/
+    continuation/concurrency/duration fixes.
+13. **Business-hours/slot generation and dashboard "today"/"this week"
+    reporting windows use server-local time, not `company.timezone`**
+    (confirmed by direct code inspection of `src/lib/scheduling.ts` and
+    `src/lib/dashboard-metrics.ts` — `company.timezone` is used only for
+    *display* formatting, never for interpreting business-hours
+    boundaries or day cutoffs). If the production host's timezone differs
+    from a company's configured timezone (likely, since the deployment
+    target is a generic Node host, commonly UTC), slot availability and
+    "booked today" figures will be wrong by the offset and shift across
+    DST. **Not fixed in this pass** (out of scope for Step 15's three
+    named fixes) — needs a timezone-aware library
+    (`date-fns-tz`/`Temporal`) in both files before real multi-region or
+    non-UTC-server deployment.
+14. **No rate limiting on public endpoints** (`POST /api/leads`,
+    `POST /api/track`, `POST /api/appointments`) — still true; no
+    `middleware.ts` exists. Combined with items 10–11 now fixed, the
+    highest-value abuse vector remaining is a scripted flood of
+    legitimate-shaped qualification answers creating real bookings/
+    consuming real capacity, not IDOR or double-booking. See
+    `docs/GOAL_AUDIT.md` Critical Path.
+15. **Seed script has a hardcoded default owner password
+    (`"changeme123"`)** with no `NODE_ENV`/production guard
+    (`prisma/seed.ts`) — confirmed by direct inspection. Running
+    `npm run db:seed` against a production database without setting
+    `SEED_OWNER_PASSWORD` creates or leaves in place a full-access owner
+    account with a publicly known password. Not fixed in this pass.
 
 None of these block the platform from functioning end-to-end (TASKS.md's
 verified-working claims stand); they're the gaps between "works" and

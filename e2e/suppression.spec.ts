@@ -17,6 +17,7 @@ async function createLead(
   contact: { firstName: string; lastName: string; email: string; phone: string },
 ) {
   let leadId: string | null = null;
+  let leadToken: string | null = null;
   for (const answers of [
     { zipCode: "73301" },
     { isHomeowner: true },
@@ -25,14 +26,16 @@ async function createLead(
     { hasExistingProvider: false },
     { timeline: "flexible" },
   ]) {
-    const r = await page.request.post("/api/leads", { data: { visitorId, leadId, answers } });
-    leadId = (await r.json()).lead.id;
+    const r = await page.request.post("/api/leads", { data: { visitorId, leadId, leadToken, answers } });
+    const body = await r.json();
+    leadId = body.lead.id;
+    leadToken = body.leadToken;
   }
   const r = await page.request.post("/api/leads", {
-    data: { visitorId, leadId, contact, smsConsent: true, emailConsent: true },
+    data: { visitorId, leadId, leadToken, contact, smsConsent: true, emailConsent: true },
   });
   const body = await r.json();
-  return { leadId: body.lead.id as string, lead: body.lead as Record<string, unknown> };
+  return { leadId: body.lead.id as string, leadToken: body.leadToken as string, lead: body.lead as Record<string, unknown> };
 }
 
 test("opted-out contact stays suppressed across a brand new lead/session", async ({ page }) => {

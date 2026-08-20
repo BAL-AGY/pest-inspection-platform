@@ -6,6 +6,7 @@ import { classifyLead, computeLeadScore, type QualificationAnswers } from "@/lib
 import { isInServiceArea, getNextQuestion } from "@/lib/qualification";
 import { requireSession } from "@/lib/require-session";
 import { suppressedChannels } from "@/lib/suppression";
+import { issueLeadToken, verifyLeadToken } from "@/lib/funnel-capability";
 
 const contactSchema = z.object({
   firstName: z.string().min(1).optional(),
@@ -27,6 +28,9 @@ const attributionSchema = z.object({
 const upsertSchema = z.object({
   visitorId: z.string().min(1),
   leadId: z.string().nullable().optional(),
+  // Required whenever leadId is supplied — proves this caller is the
+  // visitor who actually owns that lead (see src/lib/funnel-capability.ts).
+  leadToken: z.string().nullable().optional(),
   answers: z.record(z.string(), z.unknown()).optional(),
   contact: contactSchema.optional(),
   attribution: attributionSchema.optional(),
@@ -56,19 +60,50 @@ export async function POST(req: NextRequest) {
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
   }
-  const { visitorId, leadId, answers, contact, attribution, smsConsent, emailConsent } =
+  const { visitorId, leadId, leadToken, answers, contact, attribution, smsConsent, emailConsent } =
     parsed.data;
 
   const company = await getActiveCompany();
   const serviceZipCodes = parseServiceZipCodes(company);
   const scoringRules = parseScoringRules(company);
 
-  const existing = leadId
-    ? await prisma.lead.findFirst({ where: { id: leadId, companyId: company.id } })
-    : await prisma.lead.findFirst({
-        where: { companyId: company.id, visitorId },
-        orderBy: { createdAt: "desc" },
-      });
+  let existing;
+  if (leadId) {
+    const candidate = await prisma.lead.findFirst({ where: { id: leadId, companyId: company.id } });
+    if (!candidate) {
+      return NextResponse.json({ error: "not_found" }, { status: 404 });
+    }
+    // A bare leadId is never sufficient proof of ownership — verify the
+    // caller was actually issued this lead's capability token. Reject as
+    // forbidden (not silently falling through to visitorId lookup, which
+    // would let an attacker re-target a different, self-owned lead while
+    // still probing whether the guessed leadId exists).
+    const owns = verifyLeadToken({
+      companyId: company.id,
+      leadId: candidate.id,
+      visitorId: candidate.visitorId ?? "",
+      token: leadToken,
+    });
+    if (!owns) {
+      return NextResponse.json({ error: "forbidden" }, { status: 403 });
+    }
+    existing = candidate;
+  } else {
+    // No leadId supplied: this is always treated as a request to create a
+    // brand-new lead for this visitor. We deliberately do NOT look up a
+    // pre-existing lead by visitorId alone and silently reattach to (and
+    // hand out a fresh, valid token for) it — visitorId is never
+    // sufficient proof of ownership for an EXISTING lead, the same
+    // principle as the leadId branch above. An independent audit
+    // confirmed this exact fallback was a real bypass: a caller who knew
+    // or supplied a victim's visitorId could omit leadId entirely and the
+    // server would find, mutate, and re-authorize the victim's most
+    // recent lead with no proof of ownership at all (see
+    // docs/GOAL_AUDIT.md, Step 17). Continuing an existing lead always
+    // requires leadId + a valid leadToken, verified above — never
+    // visitorId matching alone.
+    existing = null;
+  }
 
   const priorAnswers: QualificationAnswers = existing?.qualificationAnswers
     ? JSON.parse(existing.qualificationAnswers)
@@ -118,7 +153,10 @@ export async function POST(req: NextRequest) {
 
   const data = {
     companyId: company.id,
-    visitorId,
+    // Frozen after creation — a continuation request's visitorId is never
+    // trusted to overwrite the lead's real, ownership-token-bound
+    // visitorId (see src/lib/funnel-capability.ts).
+    visitorId: existing?.visitorId ?? visitorId,
     firstName: contact?.firstName ?? existing?.firstName,
     lastName: contact?.lastName ?? existing?.lastName,
     email: contact?.email ?? existing?.email,
@@ -177,7 +215,7 @@ export async function POST(req: NextRequest) {
       data: {
         companyId: company.id,
         leadId: lead.id,
-        visitorId,
+        visitorId: lead.visitorId ?? visitorId,
         eventType: e.eventType,
         source: lead.source,
         medium: lead.medium,
@@ -190,8 +228,15 @@ export async function POST(req: NextRequest) {
     });
   }
 
+  const issuedLeadToken = issueLeadToken({
+    companyId: company.id,
+    leadId: lead.id,
+    visitorId: lead.visitorId ?? visitorId,
+  });
+
   return NextResponse.json({
     lead,
+    leadToken: issuedLeadToken,
     nextQuestion: getNextQuestion(mergedAnswers),
     inServiceArea: mergedAnswers.inServiceArea ?? null,
   });

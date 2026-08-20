@@ -230,7 +230,23 @@ model Appointment {
 
   communications Communication[]
 
-  @@unique([inspectorId, scheduledStart])
+  // The double-booking guard is a PARTIAL unique index on
+  // (companyId, scheduledStart) WHERE status IN ('booked', 'rescheduled'),
+  // added by raw SQL in migration 20260820220719_atomic_booking_slot_guard.
+  // It is not declarable as `@@unique` here — Prisma's schema DSL has no
+  // filtered/partial-index construct — but it is real, DB-enforced, and
+  // atomic on both SQLite and the planned PostgreSQL target. The previous
+  // `@@unique([inspectorId, scheduledStart])` provided no real protection:
+  // every booking today has `inspectorId = null` (no per-inspector
+  // calendars exist yet — see docs/ARCHITECTURE.md), and SQL unique
+  // indexes treat NULLs as distinct, so multiple null-inspector rows at
+  // the identical scheduledStart never violated it. Scoping by
+  // (companyId, scheduledStart) instead matches the app's actual
+  // single-shared-calendar model (see src/lib/scheduling.ts —
+  // `assertSlotBookable`'s overlap check is already company-wide, not
+  // per-inspector). Filtering to active statuses is required so a
+  // cancelled appointment doesn't permanently block re-booking that slot.
+  // See docs/ARCHITECTURE.md Scheduling architecture for full detail.
   @@index([companyId, scheduledStart])
   @@index([inspectorId, scheduledStart])
 }
