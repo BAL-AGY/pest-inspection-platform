@@ -153,14 +153,15 @@ before this audit.
 - [ ] **(gap, prior)** `assessment_step_completed` / `cta_clicked` event
       instrumentation — only `assessment_start` is tracked; per-question
       drop-off inside the funnel isn't measurable — `docs/EVENTS.md`
-- [ ] **(gap, audit — 2026-08-21 Codex)** `POST /api/leads`' `answers`
-      field accepts any key/value (`z.record(z.string(), z.unknown())`)
-      with no check against each question's declared allowed values, and
-      doesn't require progressive/ordered submission — a script can
-      submit all six answers in one request. Not a scoring bypass (score/
-      classification are always server-recomputed from the merged
-      answers, never trusted directly), but combined with the still-open
-      rate-limiting gap it's a path to automated fake-lead generation.
+- [x] **(fixed — Step 19)** Server-authoritative qualification validation.
+      `src/lib/qualification.ts` centrally declares question IDs, types,
+      required/conditional behavior, option values, ZIP validation,
+      ordered progression, safe single-answer correction, company service-area/
+      supported-pest checks, and booking prerequisites. `/api/leads`
+      rejects unknown/malformed/out-of-order answers and direct score/
+      classification/status fields; score and MQL/SQL remain recomputed
+      only from sanitized answers. Availability and booking re-derive the
+      complete authoritative state. See `docs/QUALIFICATION.md`.
 
 ## 6. Lead scoring
 
@@ -380,7 +381,8 @@ before this audit.
       capability tokens (issuance/verification, production-secret
       fail-closed behavior, TTL/expiry, future-dated-token rejection),
       production-startup env validation, and centralized rate-policy/store/
-      proxy-trust behavior (97 tests, `npm run test` —
+      proxy-trust behavior, plus qualification schema/progression/company-
+      eligibility behavior (101 tests, `npm run test` —
       re-verified passing 2026-08-21)
 - [x] End-to-end test of the full required journey — traffic → landing →
       funnel → lead → scoring → MQL/SQL → availability → booking →
@@ -409,9 +411,16 @@ before this audit.
       (`e2e/rate-limit.spec.ts`, 3 scenarios): normal lead/tracking/booking
       requests succeed; excessive traffic returns 429 + Retry-After;
       identifiers are isolated; and limited requests create no additional
-      Lead, FunnelEvent, or Appointment row. Full Playwright suite is now
-      20/20 passing, including ownership, atomic booking, suppression,
-      communication logging, and the full homeowner journey.
+      Lead, FunnelEvent, or Appointment row. Those protections remain green
+      in the current 24/24 suite, including ownership, atomic booking,
+      suppression, communication logging, and the full homeowner journey.
+- [x] **(added — Step 19)** Real-route adversarial qualification coverage
+      (`e2e/qualification-security.spec.ts`, 4 scenarios): unknown keys,
+      invalid options/types, fake score/classification/status, required
+      order, conditional switcher answers, supported-pest/service-area
+      derivation, legitimate SQL and prospect outcomes, and availability/
+      booking denial when persisted SQL is paired with incomplete answers.
+      Full Playwright suite is now 24/24 passing.
 - [x] **(added 2026-08-20 — Step 9)** End-to-end test of durable suppression
       (`e2e/suppression.spec.ts`): opt-out persists, a brand new Lead under a
       new visitorId with the same email/phone stays suppressed and cannot

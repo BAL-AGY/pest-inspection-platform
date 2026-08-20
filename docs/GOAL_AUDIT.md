@@ -84,11 +84,11 @@ IMPLEMENTED** · **BLOCKED BY EXTERNAL CREDENTIALS OR SERVICES**
 
 | Requirement | Status | Evidence | Gap | Priority | Recommended next action |
 |---|---|---|---|---|---|
-| Progressive questionnaire | COMPLETE AND WORKING | `src/lib/qualification.ts` + `src/app/inspection/page.tsx`; e2e walks all 6 questions | — | — | — |
-| Conditional branching | COMPLETE AND WORKING | `switchReason.showIf` only asked when `hasExistingProvider === true` | — | — | — |
+| Progressive questionnaire | COMPLETE AND WORKING, SERVER-ENFORCED (Step 19) | `validateQualificationSubmission()` permits only the current visible question while accepting unchanged cumulative prior answers; route tests reject skipped/favorable shortcuts | — | — | — |
+| Conditional branching | COMPLETE AND WORKING, SERVER-ENFORCED (Step 19) | `switchReason.showIf` controls both UI display and server applicability/required progression; invalid and omitted switcher answers are route-tested | — | — | — |
 | Pest questions | COMPLETE AND WORKING | `pestType`, `pestSeverity` questions | — | — | — |
 | Property questions | COMPLETE AND WORKING | `zipCode`, `isHomeowner` | — | — | — |
-| Service-area validation | COMPLETE AND WORKING | `isInServiceArea()`, verified in e2e (`73301` is seeded as in-area) | — | — | — |
+| Service-area / supported-service validation | COMPLETE AND WORKING, SERVER-ENFORCED (Step 19) | `deriveQualificationState()` resolves ZIP and pest support from the active Company's configuration; availability and booking re-derive it from stored validated answers | — | — | — |
 | Existing-provider/switching path | COMPLETE AND WORKING | `hasExistingProvider` → `switchReason` with `SWITCHER_DISCLAIMER` (contract-non-interference compliance text) | — | — | — |
 | Contact capture | COMPLETE AND WORKING | Contact form in `inspection/page.tsx`, verified in e2e | — | — | — |
 | Lead creation | COMPLETE AND WORKING | `POST /api/leads` upsert, verified in e2e | — | — | — |
@@ -234,7 +234,7 @@ IMPLEMENTED** · **BLOCKED BY EXTERNAL CREDENTIALS OR SERVICES**
 | Authorization | PARTIALLY IMPLEMENTED | Every protected route/page requires a session (`requireSession()`) | No route/UI behaves differently for `owner` vs `staff` — `role` is carried but unused | P1 | Decide required staff/owner distinction, then gate |
 | Role separation | NOT IMPLEMENTED | `User.role` is a free string, checked nowhere | Same as above | P1 | Same as above |
 | Tenant/company isolation | IMPLEMENTED BUT NEEDS VERIFICATION | Every Prisma query in every route/page is scoped by `session.companyId`, consistently, by code inspection | Only one `Company` exists — never exercised by a test with two tenants proving cross-tenant queries actually return nothing. Additionally (confirmed by the independent Codex audit): public routes resolve tenant via `getActiveCompany()` with no request-derived tenant signal at all (no subdomain/host resolution) — a deliberate, documented single-tenant-for-v1 scope (`src/lib/company.ts`'s own comment), not a live vulnerability today, but a real gap the moment a second company is onboarded without adding real tenant resolution first. | P1 | Add a second seeded company + a cross-tenant isolation test; add real tenant resolution to public routes before a second company goes live |
-| Input validation | COMPLETE AND WORKING | Zod schemas on every mutating API route (`/api/leads`, `/api/appointments`, `/api/track`, `/api/marketing-spend`, notes) | `POST /api/leads`' `answers` field (`z.record(z.string(), z.unknown())`) still accepts any key/value without checking each question's allowed options or progressive ordering. Score/classification are server-recomputed, so this is not a direct score-field bypass; Step 18 rate limiting bounds request volume but does not make invalid answers valid. | P2 | Constrain `answers` values to each question's declared `options`; consider requiring progressive submission |
+| Input validation | COMPLETE AND WORKING (qualification hardened Step 19) | Zod schemas on every mutating route plus centralized qualification question/type/option/ZIP/conditional/order validation. `/api/leads` is strict at the top level, so client `score`, `classification`, and `status` fields are rejected. | — | — | — |
 | Secrets | COMPLETE AND WORKING | `.env` gitignored (`.gitignore` confirmed: `.env`, `.env.*`, `!.env.example`), `.env.example` has placeholders only, `.env` itself has real local values not committed. New in Step 15: `FUNNEL_CAPABILITY_SECRET` (falls back to `AUTH_SECRET` if unset), documented in `.env.example`. | The independent Codex audit found `prisma/seed.ts` has a hardcoded default owner password (`"changeme123"`) with no `NODE_ENV`/production guard — running `npm run db:seed` against production without setting `SEED_OWNER_PASSWORD` creates/leaves a full-access owner account with a publicly known password. Confirmed by direct code inspection. Not fixed in this pass. | P1 before production seeding | Refuse to seed with the default password when `NODE_ENV === "production"` |
 | Rate limiting | IMPLEMENTED, SINGLE-PROCESS BACKEND (2026-08-21 Step 18) | Central `src/lib/rate-limit.ts` policies protect lead creation/continuation, tracking, availability, booking, and Auth.js POST actions. Identifiers are HMAC-hashed, forwarding headers are ignored unless trusted proxy hops are explicitly configured, and limited requests return 429 + Retry-After before mutation. `e2e/rate-limit.spec.ts` exercises real routes and DB non-mutation; the existing security/full-funnel suite still passes. | Current `InMemoryRateLimitStore` resets on restart and is not shared across replicas/serverless invocations. `/api/track` lead association also remains unverified even though flooding is bounded. | P1 before multi-instance production | Implement `RateLimitStore` with Redis/managed atomic counters or add an equivalent trusted edge/WAF control; configure and verify the host proxy chain |
 | Business-hours/timezone correctness | CONFIRMED GAP (found by the independent Codex audit, not fixed in this pass) | Direct code inspection confirmed `src/lib/scheduling.ts` and `src/lib/dashboard-metrics.ts` interpret business-hours boundaries and "today"/"this week" dashboard cutoffs using server-local time (`new Date().setHours(...)`), never `company.timezone` — that field is used only for *display* formatting. If the production host's timezone differs from a company's configured timezone (likely — the deployment target is a generic Node host, commonly UTC), slot availability and dashboard reporting windows will be wrong by the offset and shift across DST. | Same as evidence | P0 before non-UTC-server or multi-region production deployment | Use a timezone-aware library (`date-fns-tz`/`Temporal`) in both files to interpret boundaries in `company.timezone`, not server-local time |
@@ -245,9 +245,9 @@ IMPLEMENTED** · **BLOCKED BY EXTERNAL CREDENTIALS OR SERVICES**
 
 | Requirement | Status | Evidence | Gap | Priority | Recommended next action |
 |---|---|---|---|---|---|
-| Unit tests | COMPLETE AND WORKING | **97/97 passing** as of 2026-08-21 Step 18, including four centralized rate-limit/store/privacy/trusted-proxy tests in addition to the prior 93 security and business-logic tests | — | — | — |
+| Unit tests | COMPLETE AND WORKING | **101/101 passing** after Step 19, including centralized qualification value, progression, conditional-branch, and booking-prerequisite tests | — | — | — |
 | Integration tests | PARTIALLY IMPLEMENTED | The e2e suite is the closest thing to integration coverage (hits real API routes + real DB); no narrower API-route-level integration tests | — | P2 | Optional — e2e coverage is currently strong |
-| End-to-end tests | COMPLETE AND WORKING | **20/20 passing** as of 2026-08-21 Step 18. The three new `e2e/rate-limit.spec.ts` scenarios exercise live lead, tracking, and booking routes; assert 429/Retry-After and identifier isolation; and query the real DB to prove limited requests add no rows. The prior 17 ownership, concurrency, suppression, communication, and full-funnel scenarios remain green. | No no-show/lost-outcome/second-company scenarios yet. Token expiry remains unit-tested rather than clock-faked through live HTTP. | P1 | Add scenarios for the remaining functional gaps when implemented |
+| End-to-end tests | COMPLETE AND WORKING | **24/24 passing** after Step 19. Four qualification-security scenarios exercise real routes/DB alongside the existing rate-limit, ownership, concurrency, suppression, communication, and full-funnel coverage. | No no-show/lost-outcome/second-company scenarios yet. Token expiry remains unit-tested rather than clock-faked through live HTTP. | P1 | Add scenarios for the remaining functional gaps when implemented |
 | Production build | COMPLETE AND WORKING | **`next build` succeeded**, run fresh for this audit, all 19 routes compiled | — | — | — |
 | Type checking | COMPLETE AND WORKING | **`tsc --noEmit` — 0 errors**, run fresh for this audit | — | — | — |
 | Linting | COMPLETE AND WORKING | **`eslint` — 0 errors/warnings**, run fresh for this audit | — | — | — |
@@ -340,13 +340,12 @@ work today; items 7+ build toward a safe production launch.
    use** — confirmed by the independent Codex audit: no `NODE_ENV` check,
    `SEED_OWNER_PASSWORD` unset falls back to a publicly known password.
    Cheap fix, real consequence if missed.
-10. **Constrain `POST /api/leads`' qualification `answers` to each
-    question's declared allowed values** — confirmed by the independent
-    Codex audit: currently `z.record(z.string(), z.unknown())` accepts
-    anything, and nothing requires progressive/ordered submission. Not a
-    scoring bypass (score/classification are always server-recomputed),
-    but combined with the still-open rate-limiting gap it's a path to
-    automated fake-lead generation.
+10. ~~**Constrain `POST /api/leads` qualification answers and enforce
+    progression.**~~ **DONE (Step 19).** Central question/type/option/
+    conditional/order validation rejects arbitrary or skipped answers;
+    scoring uses only sanitized and server-derived data; availability and
+    booking independently require complete, in-area, supported-pest,
+    homeowner, contact-captured, SQL state. See `docs/QUALIFICATION.md`.
 11. **Decide and implement role enforcement** (`owner` vs `staff`) if any
     staff-facing action should actually be owner-only — currently a design
     decision left open, worth closing before a second staff account exists.

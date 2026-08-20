@@ -7,10 +7,10 @@ controls implemented in `src/lib/rate-limit.ts` and the route handlers.
 
 | Endpoint | Method | Classification | Controls |
 |---|---|---|---|
-| `/api/leads` | POST | Public write | Zod, create/continue rate policy, capability required for continuation |
+| `/api/leads` | POST | Public write | Strict Zod envelope, centralized qualification schema/progression, server scoring, create/continue rate policy, capability required for continuation |
 | `/api/track` | POST | Public write | Zod, tracking rate policy; lead association remains informational/unverified |
-| `/api/availability` | GET | Public lead-scoped read | Capability, availability rate policy, eligibility gate |
-| `/api/appointments` | POST | Public lead-scoped write | Capability, booking rate policy, server slot validation, atomic DB constraint |
+| `/api/availability` | GET | Public lead-scoped read | Capability, availability rate policy, server-rederived qualification/eligibility gate |
+| `/api/appointments` | POST | Public lead-scoped write | Capability, booking rate policy, server-rederived qualification/eligibility gate, server slot validation, atomic DB constraint |
 | `/api/auth/**` | POST | Public authentication write | Auth.js plus auth rate policy |
 | `/api/auth/**` | GET | Public authentication read | Auth.js-managed flows |
 | `/api/leads` | GET | Authenticated read | Session + company scope |

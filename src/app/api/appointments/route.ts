@@ -2,9 +2,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { getActiveCompany, parseBusinessHours, parseServiceZipCodes } from "@/lib/company";
+import {
+  getActiveCompany,
+  parseBusinessHours,
+  parseServiceZipCodes,
+  parseSupportedPests,
+} from "@/lib/company";
 import { assertSlotBookable, CapacityExceededError, DoubleBookingError } from "@/lib/scheduling";
-import { isInServiceArea } from "@/lib/qualification";
+import { deriveQualificationState, parseStoredQualificationAnswers } from "@/lib/qualification";
 import { requireSession } from "@/lib/require-session";
 import { MESSAGE_TEMPLATES } from "@/lib/communications";
 import { sendIfAllowed } from "@/lib/suppression";
@@ -54,8 +59,13 @@ export async function POST(req: NextRequest) {
   if (!limit.allowed) return rateLimitResponse(limit);
 
   const serviceZipCodes = parseServiceZipCodes(company);
-  const inArea = isInServiceArea(lead.zipCode ?? undefined, serviceZipCodes);
-  if (lead.classification !== "sql" || !inArea) {
+  const qualification = deriveQualificationState({
+    answers: parseStoredQualificationAnswers(lead.qualificationAnswers),
+    serviceZipCodes,
+    supportedPests: parseSupportedPests(company),
+    hasContact: Boolean(lead.email || lead.phone),
+  });
+  if (lead.classification !== "sql" || !qualification.eligibleForBooking) {
     return NextResponse.json(
       { error: "not_eligible", reason: "Lead is not eligible to book an inspection yet." },
       { status: 403 },

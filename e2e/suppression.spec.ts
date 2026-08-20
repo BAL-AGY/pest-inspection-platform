@@ -22,9 +22,9 @@ async function createLead(
     { zipCode: "73301" },
     { isHomeowner: true },
     { pestType: "ants" },
-    { pestSeverity: "minor" },
+    { pestSeverity: "just_noticed" },
     { hasExistingProvider: false },
-    { timeline: "flexible" },
+    { timeline: "just_researching" },
   ]) {
     const r = await page.request.post("/api/leads", { data: { visitorId, leadId, leadToken, answers } });
     const body = await r.json();

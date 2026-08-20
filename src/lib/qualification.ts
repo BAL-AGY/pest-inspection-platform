@@ -17,6 +17,29 @@ export interface QualificationQuestion {
   required: boolean;
 }
 
+export type QualificationErrorCode =
+  | "unknown_question"
+  | "invalid_answer_type"
+  | "invalid_answer_value"
+  | "invalid_progression"
+  | "answer_not_applicable";
+
+export interface QualificationValidationIssue {
+  code: QualificationErrorCode;
+  questionId: string;
+  message: string;
+}
+
+export interface QualificationState {
+  answers: QualificationAnswers;
+  complete: boolean;
+  nextQuestion: QualificationQuestion | null;
+  inServiceArea: boolean;
+  supportedPest: boolean;
+  hasContact: boolean;
+  eligibleForBooking: boolean;
+}
+
 /**
  * The progressive, conditional qualification funnel. Order matters — each
  * question narrows in on whether this is a real, in-area, ready-to-book
@@ -112,8 +135,8 @@ export function getNextQuestion(
   answers: QualificationAnswers,
 ): QualificationQuestion | null {
   for (const question of QUALIFICATION_QUESTIONS) {
-    if (question.id in answers) continue;
     if (question.showIf && !question.showIf(answers)) continue;
+    if (question.id in answers && !validateAnswerValue(question, answers[question.id])) continue;
     return question;
   }
   return null;
@@ -133,6 +156,211 @@ export function isInServiceArea(
 ): boolean {
   if (!zipCode) return false;
   return serviceZipCodes.includes(zipCode.trim());
+}
+
+function questionById(id: string): QualificationQuestion | undefined {
+  return QUALIFICATION_QUESTIONS.find((question) => question.id === id);
+}
+
+function validateAnswerValue(
+  question: QualificationQuestion,
+  value: unknown,
+): QualificationValidationIssue | null {
+  if (question.type === "boolean") {
+    return typeof value === "boolean"
+      ? null
+      : {
+          code: "invalid_answer_type",
+          questionId: question.id,
+          message: "This answer must be yes or no.",
+        };
+  }
+
+  if (typeof value !== "string") {
+    return {
+      code: "invalid_answer_type",
+      questionId: question.id,
+      message: "This answer must be text.",
+    };
+  }
+
+  if (question.type === "zip") {
+    return /^\d{5}$/.test(value)
+      ? null
+      : {
+          code: "invalid_answer_value",
+          questionId: question.id,
+          message: "Enter a valid 5-digit ZIP code.",
+        };
+  }
+
+  if (question.type === "text") {
+    return value.trim().length > 0 && value.length <= 500
+      ? null
+      : {
+          code: "invalid_answer_value",
+          questionId: question.id,
+          message: "Enter a valid answer.",
+        };
+  }
+
+  const allowed = question.options?.some((option) => option.value === value) ?? false;
+  return allowed
+    ? null
+    : {
+        code: "invalid_answer_value",
+        questionId: question.id,
+        message: "Select one of the available options.",
+      };
+}
+
+/**
+ * Validate one public qualification write against the authoritative ordered
+ * question definition. Existing answers may be repeated unchanged (the UI
+ * sends cumulative state). A request may advance by only the current visible
+ * question. One previously reached answer may also be corrected; downstream
+ * state is then sanitized against the corrected conditional path.
+ */
+export function validateQualificationSubmission(input: {
+  priorAnswers: QualificationAnswers;
+  submittedAnswers: Record<string, unknown>;
+}):
+  | { success: true; answers: QualificationAnswers }
+  | { success: false; issue: QualificationValidationIssue } {
+  const prior = extractValidQuestionAnswers(input.priorAnswers);
+  const submittedEntries = Object.entries(input.submittedAnswers);
+
+  for (const [questionId, value] of submittedEntries) {
+    const question = questionById(questionId);
+    if (!question) {
+      return {
+        success: false,
+        issue: {
+          code: "unknown_question",
+          questionId,
+          message: "This qualification question is not recognized.",
+        },
+      };
+    }
+    const issue = validateAnswerValue(question, value);
+    if (issue) return { success: false, issue };
+  }
+
+  const newEntries = submittedEntries.filter(([questionId, value]) => {
+    if (!(questionId in prior)) return true;
+    return prior[questionId] !== value;
+  });
+
+  if (newEntries.length > 1) {
+    return {
+      success: false,
+      issue: {
+        code: "invalid_progression",
+        questionId: newEntries[1][0],
+        message: "Complete qualification questions in order.",
+      },
+    };
+  }
+
+  if (newEntries.length === 1) {
+    const [questionId, value] = newEntries[0];
+    if (questionId in prior) {
+      return {
+        success: true,
+        answers: extractValidQuestionAnswers({
+          ...prior,
+          [questionId]: value as string | boolean,
+        }),
+      };
+    }
+
+    const expected = getNextQuestion(prior);
+    if (!expected || expected.id !== questionId) {
+      const question = questionById(questionId);
+      return {
+        success: false,
+        issue: {
+          code: question?.showIf && !question.showIf(prior)
+            ? "answer_not_applicable"
+            : "invalid_progression",
+          questionId,
+          message: question?.showIf && !question.showIf(prior)
+            ? "This question does not apply to the current qualification path."
+            : "Complete qualification questions in order.",
+        },
+      };
+    }
+    return {
+      success: true,
+      answers: {
+        ...prior,
+        [questionId]: value as string | boolean,
+      },
+    };
+  }
+
+  return { success: true, answers: prior };
+}
+
+/** Only declared, well-typed question answers may enter scoring. */
+export function extractValidQuestionAnswers(raw: QualificationAnswers): QualificationAnswers {
+  const answers: QualificationAnswers = {};
+  for (const question of QUALIFICATION_QUESTIONS) {
+    if (question.showIf && !question.showIf(answers)) continue;
+    const value = raw[question.id];
+    // Stop at the first missing/invalid visible question. This prevents
+    // legacy or manually-corrupted JSON with later answers from becoming a
+    // progression shortcut when the missing answer is subsequently filled.
+    if (value === undefined || validateAnswerValue(question, value)) break;
+    answers[question.id] = value;
+  }
+  return answers;
+}
+
+export function parseStoredQualificationAnswers(raw: string | null): QualificationAnswers {
+  if (!raw) return {};
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as QualificationAnswers)
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Rebuild qualification and booking eligibility from stored answers plus
+ * current company configuration. Callers never trust persisted derived flags.
+ */
+export function deriveQualificationState(input: {
+  answers: QualificationAnswers;
+  serviceZipCodes: string[];
+  supportedPests: string[];
+  hasContact: boolean;
+}): QualificationState {
+  const answers = extractValidQuestionAnswers(input.answers);
+  const nextQuestion = getNextQuestion(answers);
+  const complete = nextQuestion === null;
+  const zipCode = typeof answers.zipCode === "string" ? answers.zipCode : undefined;
+  const pestType = typeof answers.pestType === "string" ? answers.pestType : undefined;
+  const inServiceArea = isInServiceArea(zipCode, input.serviceZipCodes);
+  const supportedPest = Boolean(pestType && input.supportedPests.includes(pestType));
+
+  return {
+    answers,
+    complete,
+    nextQuestion,
+    inServiceArea,
+    supportedPest,
+    hasContact: input.hasContact,
+    eligibleForBooking:
+      complete &&
+      input.hasContact &&
+      inServiceArea &&
+      supportedPest &&
+      answers.isHomeowner === true,
+  };
 }
 
 /**

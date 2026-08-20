@@ -92,7 +92,12 @@ devices/sessions becomes a product requirement.
 table. This keeps the questionnaire schema-flexible — `src/lib/
 qualification.ts` can add/reorder/condition questions without a migration
 — and keeps scoring (`src/lib/scoring.ts`) a pure function over a plain
-object. Trade-off: you cannot currently ask the database "how many leads
+object. Public writes do not make the blob schema-free: Step 19's central
+validator stores only declared, correctly typed, progressively completed
+question answers. Derived facts (`inServiceArea`, supported-pest status,
+contact capture) are recomputed from current Company configuration and Lead
+fields rather than trusted from or persisted in this JSON. Trade-off: you
+cannot currently ask the database "how many leads
 answered `pestType = termites`" without deserializing every row in
 application code. Acceptable at current scale; would move to a normalized
 `QualificationAnswer(leadId, questionId, value)` table if per-question SQL
@@ -104,6 +109,10 @@ fresh on every qualification-answer write (`classifyLead` in
 `src/app/api/leads/route.ts` — note: **not ratcheted**, so classification
 can move down if scoring inputs change, while `Lead.status`, the pipeline
 stage, is ratcheted and only moves forward — see `docs/STATES.md`). There
+is an additional authoritative prerequisite: an incomplete questionnaire is
+always classified `prospect`, regardless of its partial score. Scheduling
+independently re-derives completion and company eligibility rather than
+trusting this denormalized classification alone. There
 is no `LeadScore` history table, and score changes are **not** written to
 `AuditLog` (only `status_change` and appointment `rescheduled` actions are
 today). **Gap worth closing before scoring-rule tuning becomes a live

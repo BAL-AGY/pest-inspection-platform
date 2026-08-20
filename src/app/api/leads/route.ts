@@ -1,9 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
-import { getActiveCompany, parseScoringRules, parseServiceZipCodes } from "@/lib/company";
+import {
+  getActiveCompany,
+  parseScoringRules,
+  parseServiceZipCodes,
+  parseSupportedPests,
+} from "@/lib/company";
 import { classifyLead, computeLeadScore, type QualificationAnswers } from "@/lib/scoring";
-import { isInServiceArea, getNextQuestion } from "@/lib/qualification";
+import {
+  deriveQualificationState,
+  parseStoredQualificationAnswers,
+  validateQualificationSubmission,
+} from "@/lib/qualification";
 import { requireSession } from "@/lib/require-session";
 import { suppressedChannels } from "@/lib/suppression";
 import { issueLeadToken, verifyLeadToken } from "@/lib/funnel-capability";
@@ -42,7 +51,7 @@ const upsertSchema = z.object({
   attribution: attributionSchema.optional(),
   smsConsent: z.boolean().optional(),
   emailConsent: z.boolean().optional(),
-});
+}).strict();
 
 const STATUS_RANK = [
   "new",
@@ -84,6 +93,7 @@ export async function POST(req: NextRequest) {
 
   const company = await getActiveCompany();
   const serviceZipCodes = parseServiceZipCodes(company);
+  const supportedPests = parseSupportedPests(company);
   const scoringRules = parseScoringRules(company);
 
   let existing;
@@ -133,25 +143,47 @@ export async function POST(req: NextRequest) {
     existing = null;
   }
 
-  const priorAnswers: QualificationAnswers = existing?.qualificationAnswers
-    ? JSON.parse(existing.qualificationAnswers)
-    : {};
+  const priorAnswers: QualificationAnswers = parseStoredQualificationAnswers(
+    existing?.qualificationAnswers ?? null,
+  );
 
-  const mergedAnswers: QualificationAnswers = {
-    ...priorAnswers,
-    ...((answers ?? {}) as QualificationAnswers),
-  };
-
-  if (typeof mergedAnswers.zipCode === "string") {
-    mergedAnswers.inServiceArea = isInServiceArea(mergedAnswers.zipCode, serviceZipCodes);
+  const validated = validateQualificationSubmission({
+    priorAnswers,
+    submittedAnswers: answers ?? {},
+  });
+  if (!validated.success) {
+    return NextResponse.json(
+      {
+        error: "invalid_qualification",
+        code: validated.issue.code,
+        questionId: validated.issue.questionId,
+        reason: validated.issue.message,
+      },
+      { status: 400 },
+    );
   }
 
   const hadContact = Boolean(existing?.email || existing?.phone);
   const nowHasContact = Boolean(contact?.email || contact?.phone || hadContact);
-  if (nowHasContact) mergedAnswers.contactCaptured = true;
+  const qualification = deriveQualificationState({
+    answers: validated.answers,
+    serviceZipCodes,
+    supportedPests,
+    hasContact: nowHasContact,
+  });
+  const scoringAnswers: QualificationAnswers = {
+    ...qualification.answers,
+    inServiceArea: qualification.inServiceArea,
+    supportedPest: qualification.supportedPest,
+    contactCaptured: qualification.hasContact,
+  };
 
-  const score = computeLeadScore(mergedAnswers, scoringRules);
-  const classification = classifyLead(score, company.mqlThreshold, company.sqlThreshold);
+  const score = computeLeadScore(scoringAnswers, scoringRules);
+  // Required qualification steps are a prerequisite for MQL/SQL. Contact
+  // may still be captured early, but one favorable answer cannot classify.
+  const classification = qualification.complete
+    ? classifyLead(score, company.mqlThreshold, company.sqlThreshold)
+    : "prospect";
 
   let nextStatus = existing?.status ?? "new";
   if (rank("engaged") > rank(nextStatus) && Object.keys(answers ?? {}).length > 0) {
@@ -190,16 +222,26 @@ export async function POST(req: NextRequest) {
     email: contact?.email ?? existing?.email,
     phone: contact?.phone ?? existing?.phone,
     isHomeowner:
-      typeof mergedAnswers.isHomeowner === "boolean" ? mergedAnswers.isHomeowner : existing?.isHomeowner,
-    zipCode: typeof mergedAnswers.zipCode === "string" ? mergedAnswers.zipCode : existing?.zipCode,
-    pestConcern: typeof mergedAnswers.pestType === "string" ? mergedAnswers.pestType : existing?.pestConcern,
+      typeof qualification.answers.isHomeowner === "boolean"
+        ? qualification.answers.isHomeowner
+        : null,
+    zipCode:
+      typeof qualification.answers.zipCode === "string"
+        ? qualification.answers.zipCode
+        : null,
+    pestConcern:
+      typeof qualification.answers.pestType === "string"
+        ? qualification.answers.pestType
+        : null,
     hasExistingProvider:
-      typeof mergedAnswers.hasExistingProvider === "boolean"
-        ? mergedAnswers.hasExistingProvider
-        : existing?.hasExistingProvider,
+      typeof qualification.answers.hasExistingProvider === "boolean"
+        ? qualification.answers.hasExistingProvider
+        : null,
     switchReason:
-      typeof mergedAnswers.switchReason === "string" ? mergedAnswers.switchReason : existing?.switchReason,
-    qualificationAnswers: JSON.stringify(mergedAnswers),
+      typeof qualification.answers.switchReason === "string"
+        ? qualification.answers.switchReason
+        : null,
+    qualificationAnswers: JSON.stringify(qualification.answers),
     score,
     classification,
     status: nextStatus,
@@ -265,8 +307,11 @@ export async function POST(req: NextRequest) {
   return NextResponse.json({
     lead,
     leadToken: issuedLeadToken,
-    nextQuestion: getNextQuestion(mergedAnswers),
-    inServiceArea: mergedAnswers.inServiceArea ?? null,
+    nextQuestion: qualification.nextQuestion,
+    qualificationComplete: qualification.complete,
+    eligibleForBooking: qualification.eligibleForBooking && classification === "sql",
+    inServiceArea: qualification.inServiceArea,
+    supportedPest: qualification.supportedPest,
   });
 }
 

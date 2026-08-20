@@ -130,6 +130,27 @@ seam for Redis or a managed atomic counter; a shared store or equivalent
 verified edge/WAF control remains required before horizontally scaled public
 traffic.
 
+### Server-authoritative qualification
+
+`src/lib/qualification.ts` is the single definition and validation boundary
+for public qualification answers. It owns question IDs, types, required and
+conditional behavior, allowed option values, ZIP validation, ordered
+progression, and company-specific service-area/supported-pest derivation. The
+interactive client renders the same definitions, but its local progression
+and classification are never authorization signals.
+
+`POST /api/leads` accepts at most the next visible answer per request (plus
+unchanged cumulative prior answers for UI compatibility), rejects attempts to
+change multiple steps at once, safely revalidates downstream state after a
+single-answer correction, sanitizes persisted legacy JSON, derives internal
+scoring facts, and computes score/classification server-side. Incomplete
+questionnaires remain `prospect` regardless of favorable partial answers.
+`GET /api/availability` and `POST /api/appointments` independently rebuild
+qualification state from stored answers and current Company configuration;
+they require a complete questionnaire, contact capture, homeowner status,
+service-area membership, supported pest, and SQL classification. Full rules
+and response behavior are documented in `docs/QUALIFICATION.md`.
+
 ### Server/client boundaries
 
 Public funnel pages and dashboard read views are server components/route
@@ -484,7 +505,7 @@ src/
     require-session.ts     Session → {companyId, role} resolver
     company.ts              Active-company resolver + JSON-config parsers
     pipeline.ts              Canonical status/event-type string unions (single source of truth)
-    qualification.ts         Question set, next-question logic, service-area check
+    qualification.ts         Authoritative questions, validation, progression, eligibility
     scoring.ts                Configurable scoring rules, classification
     scheduling.ts             Slot generation, conflict/capacity/duration checks
     funnel-capability.ts        Public lead-ownership HMAC capability tokens

@@ -1,8 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { getActiveCompany, parseBusinessHours, parseServiceZipCodes } from "@/lib/company";
+import {
+  getActiveCompany,
+  parseBusinessHours,
+  parseServiceZipCodes,
+  parseSupportedPests,
+} from "@/lib/company";
 import { generateCandidateSlots, filterAvailableSlots } from "@/lib/scheduling";
-import { isInServiceArea } from "@/lib/qualification";
+import { deriveQualificationState, parseStoredQualificationAnswers } from "@/lib/qualification";
 import { verifyLeadToken } from "@/lib/funnel-capability";
 import { enforceRateLimit, rateLimitResponse, trustedClientAddress } from "@/lib/rate-limit";
 
@@ -41,16 +46,27 @@ export async function GET(req: NextRequest) {
   if (!limit.allowed) return rateLimitResponse(limit);
 
   const serviceZipCodes = parseServiceZipCodes(company);
-  const inArea = isInServiceArea(lead.zipCode ?? undefined, serviceZipCodes);
+  const qualification = deriveQualificationState({
+    answers: parseStoredQualificationAnswers(lead.qualificationAnswers),
+    serviceZipCodes,
+    supportedPests: parseSupportedPests(company),
+    hasContact: Boolean(lead.email || lead.phone),
+  });
 
-  if (lead.classification !== "sql" || !inArea) {
+  if (lead.classification !== "sql" || !qualification.eligibleForBooking) {
     return NextResponse.json(
       {
         error: "not_eligible",
         reason:
-          lead.classification !== "sql"
+          lead.classification !== "sql" || !qualification.complete
             ? "This lead has not yet qualified for a booked inspection."
-            : "This address is outside the current service area.",
+            : !qualification.inServiceArea
+              ? "This address is outside the current service area."
+              : !qualification.supportedPest
+                ? "This pest concern is not eligible for online inspection booking."
+                : qualification.answers.isHomeowner !== true
+                  ? "Online inspection booking is currently available for homeowners."
+                  : "Contact information is required before viewing inspection times.",
       },
       { status: 403 },
     );

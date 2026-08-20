@@ -5,7 +5,6 @@ import {
   QUALIFICATION_QUESTIONS,
   SWITCHER_DISCLAIMER,
   getNextQuestion,
-  isFunnelComplete,
 } from "@/lib/qualification";
 import type { QualificationAnswers } from "@/lib/scoring";
 import {
@@ -23,6 +22,7 @@ interface LeadState {
   token: string | null;
   classification: "prospect" | "mql" | "sql";
   inServiceArea: boolean | null;
+  eligibleForBooking: boolean;
 }
 
 export default function InspectionFunnelPage() {
@@ -32,6 +32,7 @@ export default function InspectionFunnelPage() {
     token: null,
     classification: "prospect",
     inServiceArea: null,
+    eligibleForBooking: false,
   });
   const [stage, setStage] = useState<Stage>("questions");
   const [submitting, setSubmitting] = useState(false);
@@ -70,11 +71,12 @@ export default function InspectionFunnelPage() {
           token: data.leadToken,
           classification: data.lead.classification,
           inServiceArea: data.inServiceArea,
+          eligibleForBooking: data.eligibleForBooking,
         });
         storeLeadId(data.lead.id);
         storeLeadToken(data.leadToken);
       }
-      if (isFunnelComplete(next)) {
+      if (res.ok && data.qualificationComplete) {
         setStage("contact");
       }
     } finally {
@@ -108,11 +110,18 @@ export default function InspectionFunnelPage() {
       const data = await res.json();
       const classification = data.lead?.classification as LeadState["classification"];
       const inServiceArea = data.inServiceArea as boolean | null;
-      setLead({ id: data.lead.id, token: data.leadToken, classification, inServiceArea });
+      const eligibleForBooking = data.eligibleForBooking === true;
+      setLead({
+        id: data.lead.id,
+        token: data.leadToken,
+        classification,
+        inServiceArea,
+        eligibleForBooking,
+      });
       storeLeadId(data.lead.id);
       storeLeadToken(data.leadToken);
 
-      if (classification === "sql" && inServiceArea) {
+      if (eligibleForBooking) {
         setStage("scheduler");
         await loadSlots(data.lead.id, data.leadToken);
       } else {
