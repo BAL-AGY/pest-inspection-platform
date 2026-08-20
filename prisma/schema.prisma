@@ -1,0 +1,269 @@
+// Prisma schema — see docs/ARCHITECTURE.md for the database decision record.
+// Dev/test in this environment: SQLite (no local Postgres available).
+// Production target: PostgreSQL. Enums are modeled as validated strings
+// (not native Prisma enums) so this schema stays portable between the two.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Tenant
+// ---------------------------------------------------------------------------
+
+model Company {
+  id       String @id @default(cuid())
+  name     String
+  slug     String @unique
+  timezone String @default("America/Chicago")
+
+  // Service area / operations config
+  serviceZipCodes           String // JSON-encoded string[] of ZIP codes served
+  supportedPests            String // JSON-encoded string[] of pest types handled
+  businessHours             String // JSON-encoded weekly business-hours config
+  inspectionDurationMinutes Int    @default(60)
+  maxDailyInspections       Int    @default(8)
+
+  // Lead scoring config (company-configurable, not hardcoded)
+  scoringRules String // JSON-encoded scoring rule set
+  mqlThreshold Int    @default(40)
+  sqlThreshold Int    @default(70)
+
+  // Marketing economics assumptions (company-entered, used for ROI comparisons)
+  averageContractValueCents  Int? // nullable: unknown until entered
+  estimatedCommissionPercent Float?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users          User[]
+  inspectors     Inspector[]
+  leads          Lead[]
+  appointments   Appointment[]
+  funnelEvents   FunnelEvent[]
+  marketingSpend MarketingSpend[]
+  auditLogs      AuditLog[]
+}
+
+// ---------------------------------------------------------------------------
+// Auth / staff
+// ---------------------------------------------------------------------------
+
+model User {
+  id           String   @id @default(cuid())
+  companyId    String
+  company      Company  @relation(fields: [companyId], references: [id])
+  name         String
+  email        String   @unique
+  passwordHash String
+  role         String   @default("owner") // "owner" | "staff"
+  createdAt    DateTime @default(now())
+
+  auditLogs AuditLog[]
+}
+
+// ---------------------------------------------------------------------------
+// Inspectors
+// ---------------------------------------------------------------------------
+
+model Inspector {
+  id        String  @id @default(cuid())
+  companyId String
+  company   Company @relation(fields: [companyId], references: [id])
+  name      String
+  email     String
+  phone     String?
+  active    Boolean @default(true)
+
+  appointments Appointment[]
+}
+
+// ---------------------------------------------------------------------------
+// Lead / CRM
+// ---------------------------------------------------------------------------
+
+model Lead {
+  id        String  @id @default(cuid())
+  companyId String
+  company   Company @relation(fields: [companyId], references: [id])
+
+  // Contact
+  firstName String?
+  lastName  String?
+  email     String?
+  phone     String?
+
+  // Property
+  addressLine1 String?
+  addressLine2 String?
+  city         String?
+  state        String?
+  zipCode      String?
+  isHomeowner  Boolean?
+
+  // Pest concern / qualification answers (JSON-encoded, schema-flexible by design)
+  qualificationAnswers String? // JSON-encoded Record<questionId, answer>
+  pestConcern          String?
+
+  // Existing provider / switcher path
+  hasExistingProvider  Boolean?
+  existingProviderName String?
+  switchReason         String? // e.g. "recurring_infestation" | "poor_service" | ...
+
+  // Scoring / classification
+  score          Int    @default(0)
+  classification String @default("prospect") // "prospect" | "mql" | "sql"
+
+  // Pipeline
+  status String @default("new")
+  // "new" | "engaged" | "mql" | "sql" | "inspection_booked" |
+  // "inspection_completed" | "customer_won" | "customer_lost"
+
+  outcome            String? // "won" | "lost" (set once inspection completed)
+  lostReason         String?
+  contractValueCents Int?
+
+  // Attribution (first-touch, captured at first FunnelEvent)
+  source      String?
+  medium      String?
+  campaign    String?
+  content     String?
+  term        String?
+  landingPage String?
+  clickId     String?
+  visitorId   String? // anonymous id set pre-identification, links to FunnelEvents
+
+  // Communications consent (TCPA/CAN-SPAM boundaries)
+  smsConsent     Boolean   @default(false)
+  smsConsentAt   DateTime?
+  emailConsent   Boolean   @default(false)
+  emailConsentAt DateTime?
+  optedOutAt     DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  appointments Appointment[]
+  funnelEvents FunnelEvent[]
+  notes        LeadNote[]
+
+  @@index([companyId, status])
+  @@index([visitorId])
+}
+
+model LeadNote {
+  id        String   @id @default(cuid())
+  leadId    String
+  lead      Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  authorId  String?
+  body      String
+  createdAt DateTime @default(now())
+}
+
+// ---------------------------------------------------------------------------
+// Funnel / attribution event log (append-only source of truth for analytics)
+// ---------------------------------------------------------------------------
+
+model FunnelEvent {
+  id        String  @id @default(cuid())
+  companyId String
+  company   Company @relation(fields: [companyId], references: [id])
+  leadId    String?
+  lead      Lead?   @relation(fields: [leadId], references: [id])
+  visitorId String
+
+  eventType String
+  // "visit" | "assessment_start" | "contact_captured" | "lead_created" |
+  // "mql" | "sql" | "scheduler_viewed" | "appointment_booked" |
+  // "appointment_completed" | "customer_won" | "customer_lost"
+
+  // Attribution captured at the event (first touch persisted on Lead;
+  // every event keeps its own for full-path analysis later)
+  source      String?
+  medium      String?
+  campaign    String?
+  content     String?
+  term        String?
+  landingPage String?
+  clickId     String?
+
+  metadata  String? // JSON-encoded event-specific payload
+  createdAt DateTime @default(now())
+
+  @@index([companyId, eventType])
+  @@index([visitorId])
+}
+
+// ---------------------------------------------------------------------------
+// Scheduling
+// ---------------------------------------------------------------------------
+
+model Appointment {
+  id          String     @id @default(cuid())
+  companyId   String
+  company     Company    @relation(fields: [companyId], references: [id])
+  leadId      String
+  lead        Lead       @relation(fields: [leadId], references: [id])
+  inspectorId String?
+  inspector   Inspector? @relation(fields: [inspectorId], references: [id])
+
+  scheduledStart DateTime
+  scheduledEnd   DateTime
+
+  status String @default("booked")
+  // "booked" | "rescheduled" | "cancelled" | "no_show" | "completed"
+
+  completedAt       DateTime?
+  cancelledAt       DateTime?
+  rescheduledFromId String? // points at the prior Appointment.id when rescheduled
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([inspectorId, scheduledStart])
+  @@index([companyId, scheduledStart])
+  @@index([inspectorId, scheduledStart])
+}
+
+// ---------------------------------------------------------------------------
+// Marketing economics
+// ---------------------------------------------------------------------------
+
+model MarketingSpend {
+  id          String   @id @default(cuid())
+  companyId   String
+  company     Company  @relation(fields: [companyId], references: [id])
+  source      String
+  campaign    String?
+  periodStart DateTime
+  periodEnd   DateTime
+  amountCents Int
+
+  createdAt DateTime @default(now())
+
+  @@index([companyId, source, periodStart])
+}
+
+// ---------------------------------------------------------------------------
+// Audit log
+// ---------------------------------------------------------------------------
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  companyId  String
+  company    Company  @relation(fields: [companyId], references: [id])
+  userId     String?
+  user       User?    @relation(fields: [userId], references: [id])
+  action     String
+  entityType String
+  entityId   String
+  metadata   String? // JSON-encoded before/after or context
+  createdAt  DateTime @default(now())
+
+  @@index([companyId, entityType, entityId])
+}

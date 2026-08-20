@@ -1,0 +1,378 @@
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+import {
+  QUALIFICATION_QUESTIONS,
+  SWITCHER_DISCLAIMER,
+  getNextQuestion,
+  isFunnelComplete,
+} from "@/lib/qualification";
+import type { QualificationAnswers } from "@/lib/scoring";
+import {
+  attributionFromLocation,
+  getOrCreateVisitorId,
+  storeLeadId,
+  track,
+} from "@/lib/visitor";
+
+type Stage = "questions" | "contact" | "scheduler" | "confirmed" | "not-eligible";
+
+interface LeadState {
+  id: string | null;
+  classification: "prospect" | "mql" | "sql";
+  inServiceArea: boolean | null;
+}
+
+export default function InspectionFunnelPage() {
+  const [answers, setAnswers] = useState<QualificationAnswers>({});
+  const [lead, setLead] = useState<LeadState>({ id: null, classification: "prospect", inServiceArea: null });
+  const [stage, setStage] = useState<Stage>("questions");
+  const [submitting, setSubmitting] = useState(false);
+  const [contact, setContact] = useState({ firstName: "", lastName: "", email: "", phone: "" });
+  const [consent, setConsent] = useState({ sms: false, email: true });
+  const [slots, setSlots] = useState<{ start: string; end: string }[]>([]);
+  const [slotsError, setSlotsError] = useState<string | null>(null);
+  const [selectedSlot, setSelectedSlot] = useState<string | null>(null);
+  const [bookingError, setBookingError] = useState<string | null>(null);
+  const [confirmedWhen, setConfirmedWhen] = useState<string | null>(null);
+
+  useEffect(() => {
+    track("assessment_start");
+  }, []);
+
+  const question = useMemo(() => getNextQuestion(answers), [answers]);
+
+  async function saveAnswers(next: QualificationAnswers) {
+    setSubmitting(true);
+    try {
+      const res = await fetch("/api/leads", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          visitorId: getOrCreateVisitorId(),
+          leadId: lead.id,
+          answers: next,
+          attribution: attributionFromLocation(),
+        }),
+      });
+      const data = await res.json();
+      if (data.lead?.id) {
+        setLead({
+          id: data.lead.id,
+          classification: data.lead.classification,
+          inServiceArea: data.inServiceArea,
+        });
+        storeLeadId(data.lead.id);
+      }
+      if (isFunnelComplete(next)) {
+        setStage("contact");
+      }
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  function answer(id: string, value: string | boolean) {
+    const next = { ...answers, [id]: value };
+    setAnswers(next);
+    void saveAnswers(next);
+  }
+
+  async function submitContact(e: React.FormEvent) {
+    e.preventDefault();
+    setSubmitting(true);
+    try {
+      const res = await fetch("/api/leads", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          visitorId: getOrCreateVisitorId(),
+          leadId: lead.id,
+          contact,
+          smsConsent: consent.sms,
+          emailConsent: consent.email,
+          attribution: attributionFromLocation(),
+        }),
+      });
+      const data = await res.json();
+      const classification = data.lead?.classification as LeadState["classification"];
+      const inServiceArea = data.inServiceArea as boolean | null;
+      setLead({ id: data.lead.id, classification, inServiceArea });
+
+      if (classification === "sql" && inServiceArea) {
+        setStage("scheduler");
+        await loadSlots(data.lead.id);
+      } else {
+        setStage("not-eligible");
+      }
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function loadSlots(leadId: string) {
+    setSlotsError(null);
+    const res = await fetch(`/api/availability?leadId=${leadId}`);
+    const data = await res.json();
+    if (!res.ok) {
+      setSlotsError(data.reason ?? "No availability right now.");
+      return;
+    }
+    setSlots(data.slots);
+  }
+
+  async function bookSlot() {
+    if (!selectedSlot || !lead.id) return;
+    setBookingError(null);
+    setSubmitting(true);
+    try {
+      const slot = slots.find((s) => s.start === selectedSlot);
+      if (!slot) return;
+      const res = await fetch("/api/appointments", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ leadId: lead.id, start: slot.start, end: slot.end }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setBookingError(data.reason ?? "That time is no longer available. Please pick another.");
+        await loadSlots(lead.id);
+        return;
+      }
+      setConfirmedWhen(
+        new Date(data.appointment.scheduledStart).toLocaleString("en-US", {
+          weekday: "long",
+          month: "long",
+          day: "numeric",
+          hour: "numeric",
+          minute: "2-digit",
+        }),
+      );
+      setStage("confirmed");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  const progress = Math.min(
+    100,
+    Math.round(
+      (Object.keys(answers).length / QUALIFICATION_QUESTIONS.length) * 100,
+    ),
+  );
+
+  return (
+    <main className="flex-1 flex flex-col bg-white text-zinc-900">
+      <div className="h-1.5 bg-zinc-100">
+        <div
+          className="h-full bg-emerald-700 transition-all"
+          style={{ width: stage === "questions" ? `${progress}%` : "100%" }}
+        />
+      </div>
+
+      <div className="flex-1 flex flex-col justify-center px-6 py-12 max-w-xl mx-auto w-full gap-6">
+        {stage === "questions" && question && (
+          <QuestionCard
+            key={question.id}
+            question={question}
+            onAnswer={answer}
+            disabled={submitting}
+          />
+        )}
+
+        {stage === "contact" && (
+          <form onSubmit={submitContact} className="flex flex-col gap-4">
+            <h2 className="text-2xl font-bold">Almost done — where should we send your inspection details?</h2>
+            <div className="grid grid-cols-2 gap-3">
+              <input
+                required
+                placeholder="First name"
+                className="border border-zinc-300 rounded-md px-4 py-3"
+                value={contact.firstName}
+                onChange={(e) => setContact({ ...contact, firstName: e.target.value })}
+              />
+              <input
+                placeholder="Last name"
+                className="border border-zinc-300 rounded-md px-4 py-3"
+                value={contact.lastName}
+                onChange={(e) => setContact({ ...contact, lastName: e.target.value })}
+              />
+            </div>
+            <input
+              required
+              type="email"
+              placeholder="Email"
+              className="border border-zinc-300 rounded-md px-4 py-3"
+              value={contact.email}
+              onChange={(e) => setContact({ ...contact, email: e.target.value })}
+            />
+            <input
+              required
+              type="tel"
+              placeholder="Phone"
+              className="border border-zinc-300 rounded-md px-4 py-3"
+              value={contact.phone}
+              onChange={(e) => setContact({ ...contact, phone: e.target.value })}
+            />
+            <label className="flex items-start gap-2 text-sm text-zinc-600">
+              <input
+                type="checkbox"
+                checked={consent.sms}
+                onChange={(e) => setConsent({ ...consent, sms: e.target.checked })}
+                className="mt-1"
+              />
+              Text me appointment confirmations and reminders. Msg &amp; data rates may
+              apply. Reply STOP to opt out.
+            </label>
+            <button
+              disabled={submitting}
+              className="rounded-md bg-emerald-700 px-6 py-4 text-lg font-semibold text-white disabled:opacity-50"
+            >
+              {submitting ? "Submitting…" : "See Available Times"}
+            </button>
+          </form>
+        )}
+
+        {stage === "scheduler" && (
+          <div className="flex flex-col gap-4">
+            <h2 className="text-2xl font-bold">Pick a time for your free inspection</h2>
+            {slotsError && <p className="text-red-600">{slotsError}</p>}
+            {bookingError && <p className="text-red-600">{bookingError}</p>}
+            <div className="grid grid-cols-2 gap-2 max-h-96 overflow-y-auto">
+              {slots.map((slot) => (
+                <button
+                  key={slot.start}
+                  onClick={() => setSelectedSlot(slot.start)}
+                  className={`rounded-md border px-3 py-3 text-sm ${
+                    selectedSlot === slot.start
+                      ? "border-emerald-700 bg-emerald-50 font-semibold"
+                      : "border-zinc-300"
+                  }`}
+                >
+                  {new Date(slot.start).toLocaleString("en-US", {
+                    weekday: "short",
+                    month: "short",
+                    day: "numeric",
+                    hour: "numeric",
+                    minute: "2-digit",
+                  })}
+                </button>
+              ))}
+            </div>
+            <button
+              disabled={!selectedSlot || submitting}
+              onClick={bookSlot}
+              className="rounded-md bg-emerald-700 px-6 py-4 text-lg font-semibold text-white disabled:opacity-50"
+            >
+              {submitting ? "Booking…" : "Book Free Inspection"}
+            </button>
+          </div>
+        )}
+
+        {stage === "confirmed" && (
+          <div className="flex flex-col gap-3 text-center">
+            <h2 className="text-2xl font-bold">You&apos;re booked! 🎉</h2>
+            <p className="text-zinc-600">
+              Your free home inspection is confirmed for {confirmedWhen}. We&apos;ll send you a
+              confirmation and reminders.
+            </p>
+          </div>
+        )}
+
+        {stage === "not-eligible" && (
+          <div className="flex flex-col gap-3 text-center">
+            <h2 className="text-2xl font-bold">Thanks for reaching out</h2>
+            <p className="text-zinc-600">
+              {lead.inServiceArea === false
+                ? "It looks like your address is outside our current service area, so we can't book an inspection online right now."
+                : "Thanks for the info — a team member will follow up shortly to see if we're a good fit."}
+            </p>
+          </div>
+        )}
+      </div>
+    </main>
+  );
+}
+
+function QuestionCard({
+  question,
+  onAnswer,
+  disabled,
+}: {
+  question: (typeof QUALIFICATION_QUESTIONS)[number];
+  onAnswer: (id: string, value: string | boolean) => void;
+  disabled: boolean;
+}) {
+  const [zip, setZip] = useState("");
+
+  return (
+    <div className="flex flex-col gap-4">
+      <h2 className="text-2xl font-bold text-balance">{question.prompt}</h2>
+      {question.id === "switchReason" && (
+        <p className="text-sm text-zinc-500">{SWITCHER_DISCLAIMER}</p>
+      )}
+
+      {question.type === "zip" && (
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (zip.trim()) onAnswer(question.id, zip.trim());
+          }}
+          className="flex gap-2"
+        >
+          <input
+            inputMode="numeric"
+            pattern="[0-9]{5}"
+            maxLength={5}
+            required
+            placeholder="ZIP code"
+            className="flex-1 border border-zinc-300 rounded-md px-4 py-3 text-lg"
+            value={zip}
+            onChange={(e) => setZip(e.target.value)}
+            autoFocus
+          />
+          <button
+            disabled={disabled}
+            className="rounded-md bg-emerald-700 px-6 py-3 font-semibold text-white disabled:opacity-50"
+          >
+            Next
+          </button>
+        </form>
+      )}
+
+      {question.type === "boolean" && (
+        <div className="flex gap-3">
+          <button
+            disabled={disabled}
+            onClick={() => onAnswer(question.id, true)}
+            className="flex-1 rounded-md border border-zinc-300 px-6 py-4 text-lg font-medium hover:border-emerald-700 disabled:opacity-50"
+          >
+            Yes
+          </button>
+          <button
+            disabled={disabled}
+            onClick={() => onAnswer(question.id, false)}
+            className="flex-1 rounded-md border border-zinc-300 px-6 py-4 text-lg font-medium hover:border-emerald-700 disabled:opacity-50"
+          >
+            No
+          </button>
+        </div>
+      )}
+
+      {question.type === "single_select" && (
+        <div className="flex flex-col gap-2">
+          {question.options?.map((opt) => (
+            <button
+              key={opt.value}
+              disabled={disabled}
+              onClick={() => onAnswer(question.id, opt.value)}
+              className="rounded-md border border-zinc-300 px-4 py-3 text-left hover:border-emerald-700 disabled:opacity-50"
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
