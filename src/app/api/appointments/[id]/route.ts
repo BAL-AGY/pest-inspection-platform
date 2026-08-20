@@ -4,7 +4,8 @@ import { prisma } from "@/lib/prisma";
 import { getActiveCompany, parseBusinessHours } from "@/lib/company";
 import { assertSlotBookable, DoubleBookingError } from "@/lib/scheduling";
 import { requireSession } from "@/lib/require-session";
-import { MESSAGE_TEMPLATES, sendIfConsented } from "@/lib/communications";
+import { MESSAGE_TEMPLATES } from "@/lib/communications";
+import { sendIfAllowed } from "@/lib/suppression";
 import { cancelAppointmentAndNotify } from "@/lib/appointment-actions";
 
 const patchSchema = z.object({
@@ -102,14 +103,14 @@ export async function PATCH(
       },
     });
     if (appointment.lead.email) {
-      await sendIfConsented(
+      await sendIfAllowed(
         {
           channel: "email",
           to: appointment.lead.email,
           subject: "Your inspection has been rescheduled",
           body: MESSAGE_TEMPLATES.rescheduled({ name, when: fmt(requestedStart) }),
         },
-        consent,
+        { companyId: session.companyId, consent },
       );
     }
     return NextResponse.json({ appointment: updated });

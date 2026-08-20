@@ -5,6 +5,7 @@ import { getActiveCompany, parseScoringRules, parseServiceZipCodes } from "@/lib
 import { classifyLead, computeLeadScore, type QualificationAnswers } from "@/lib/scoring";
 import { isInServiceArea, getNextQuestion } from "@/lib/qualification";
 import { requireSession } from "@/lib/require-session";
+import { suppressedChannels } from "@/lib/suppression";
 
 const contactSchema = z.object({
   firstName: z.string().min(1).optional(),
@@ -97,6 +98,19 @@ export async function POST(req: NextRequest) {
     nextStatus = classification;
   }
 
+  // Check the durable suppression system by normalized email/phone so a
+  // previously suppressed contact can't regain marketing permission just by
+  // submitting the funnel again under a new visitorId/Lead row (see
+  // docs/GOAL_AUDIT.md — this is the gap this change closes).
+  const resolvedEmail = contact?.email ?? existing?.email ?? null;
+  const resolvedPhone = contact?.phone ?? existing?.phone ?? null;
+  const suppressed = await suppressedChannels({
+    companyId: company.id,
+    email: resolvedEmail,
+    phone: resolvedPhone,
+  });
+  const isSuppressedContact = suppressed.email || suppressed.sms;
+
   const isNew = !existing;
   const becameMql = classification === "mql" && existing?.classification !== "mql" && existing?.classification !== "sql";
   const becameSql = classification === "sql" && existing?.classification !== "sql";
@@ -130,10 +144,22 @@ export async function POST(req: NextRequest) {
     term: existing?.term ?? attribution?.term ?? null,
     landingPage: existing?.landingPage ?? attribution?.landingPage ?? null,
     clickId: existing?.clickId ?? attribution?.clickId ?? null,
-    smsConsent: smsConsent ?? existing?.smsConsent ?? false,
-    smsConsentAt: smsConsent ? new Date() : existing?.smsConsentAt,
-    emailConsent: emailConsent ?? existing?.emailConsent ?? false,
-    emailConsentAt: emailConsent ? new Date() : existing?.emailConsentAt,
+    // Suppressed channels never get (re)activated here, regardless of what
+    // consent flags the request carried — a suppressed contact does not
+    // silently regain marketing permission by re-entering the funnel.
+    smsConsent: suppressed.sms ? false : smsConsent ?? existing?.smsConsent ?? false,
+    smsConsentAt: suppressed.sms ? existing?.smsConsentAt ?? null : smsConsent ? new Date() : existing?.smsConsentAt,
+    emailConsent: suppressed.email ? false : emailConsent ?? existing?.emailConsent ?? false,
+    emailConsentAt: suppressed.email
+      ? existing?.emailConsentAt ?? null
+      : emailConsent
+        ? new Date()
+        : existing?.emailConsentAt,
+    // Surface suppression status on the lead itself (in addition to the
+    // durable, send-time gate) so the CRM shows the true state immediately
+    // rather than only when a send is attempted. Never clears an
+    // independently-set optedOutAt.
+    optedOutAt: isSuppressedContact ? existing?.optedOutAt ?? new Date() : existing?.optedOutAt,
   };
 
   const lead = existing

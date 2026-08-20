@@ -1,5 +1,6 @@
 import { prisma } from "./prisma";
-import { MESSAGE_TEMPLATES, sendIfConsented } from "./communications";
+import { MESSAGE_TEMPLATES } from "./communications";
+import { sendIfAllowed } from "./suppression";
 
 export class AppointmentNotFoundError extends Error {
   constructor() {
@@ -44,7 +45,7 @@ export async function cancelAppointmentAndNotify(appointmentId: string, companyI
   }
 
   if (appointment.lead.email) {
-    await sendIfConsented(
+    await sendIfAllowed(
       {
         channel: "email",
         to: appointment.lead.email,
@@ -52,9 +53,12 @@ export async function cancelAppointmentAndNotify(appointmentId: string, companyI
         body: MESSAGE_TEMPLATES.cancelled({ name: appointment.lead.firstName ?? "there" }),
       },
       {
-        emailConsent: appointment.lead.emailConsent,
-        smsConsent: appointment.lead.smsConsent,
-        optedOutAt: appointment.lead.optedOutAt,
+        companyId,
+        consent: {
+          emailConsent: appointment.lead.emailConsent,
+          smsConsent: appointment.lead.smsConsent,
+          optedOutAt: appointment.lead.optedOutAt,
+        },
       },
     );
   }

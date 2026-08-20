@@ -47,8 +47,10 @@ before this audit.
       — `docs/DATA_MODEL.md`
 - [ ] **(gap, prior)** `Communication` table (delivery log — currently sends
       are not persisted anywhere)
-- [ ] **(gap, prior)** `SuppressionEntry` table (company/global opt-out list
-      by phone/email, independent of any one Lead row)
+- [x] **(fixed 2026-08-20 — Step 9)** `SuppressionEntry` table (company-scoped
+      opt-out list keyed by normalized email/phone, independent of any one
+      Lead row) — `prisma/schema.prisma`, migration
+      `20260820203841_add_suppression_entry`
 - [ ] **(gap, prior)** Lead score/classification change history (currently
       not written to `AuditLog`)
 
@@ -202,9 +204,22 @@ before this audit.
 - [x] Dev provider (console log) — real send path, no live vendor wired up
 - [ ] **(gap, prior)** `Communication` delivery log (see Database, milestone
       2) — should exist before a live provider is wired up
-- [ ] **(gap, prior)** `SuppressionEntry` (see Database, milestone 2) —
-      highest-priority compliance gap identified in this review, P0 before
-      any live send volume — `docs/GOAL_AUDIT.md`
+- [x] **(fixed 2026-08-20 — Step 9)** Durable, cross-lead/cross-session
+      suppression — `src/lib/suppression.ts`. A contact who opts out is
+      recorded in `SuppressionEntry` (normalized email/phone, company-scoped)
+      and stays suppressed even when a new `Lead` row is created under a new
+      `visitorId`. The shared send gate (`sendIfAllowed`, used by every send
+      call site: booking confirmation, reschedule, cancellation) checks
+      suppression before per-lead consent. Lead creation/contact capture
+      (`POST /api/leads`) checks suppression and will not (re)activate
+      `smsConsent`/`emailConsent` for a suppressed identifier, and surfaces
+      `optedOutAt` on the new Lead row. Opting a lead out via the existing
+      CRM mechanism (`PATCH /api/leads/[id]` `{ optedOut: true }`) now also
+      writes to `SuppressionEntry`. See `docs/GOAL_AUDIT.md` for full
+      before/after detail, the marketing-vs-transactional limitation
+      (no distinction exists in the current system, so suppression blocks
+      all sends uniformly, matching existing `canSend` behavior), and what's
+      still open (no suppression-management UI, no un-suppress flow).
 - [x] **(bug, audit — fixed 2026-08-20)** Cancellation messages now send
       consistently regardless of which UI path staff use (see Scheduling,
       milestone 7, for the fix)
@@ -230,18 +245,27 @@ before this audit.
 
 - [x] Unit tests: scoring, qualification/service-area,
       scheduling/double-booking, attribution, analytics, communications
-      consent gating (51 tests, `npm run test` — re-verified passing
-      2026-08-20)
+      consent gating, suppression normalization/tenant-scoping/shared-gate
+      (66 tests, `npm run test` — re-verified passing 2026-08-20)
 - [x] End-to-end test of the full required journey — traffic → landing →
       funnel → lead → scoring → MQL/SQL → availability → booking →
       double-booking prevention → CRM/pipeline → inspection completed →
       customer won → dashboard/analytics update (`npx playwright test` —
       re-verified passing live, 2026-08-20)
+- [x] **(added 2026-08-20 — Step 9)** End-to-end test of durable suppression
+      (`e2e/suppression.spec.ts`): opt-out persists, a brand new Lead under a
+      new visitorId with the same email/phone stays suppressed and cannot
+      reactivate consent, an unrelated contact is unaffected — run live
+      against the real dev DB, passing
 - [x] Type checking (`npx tsc --noEmit` — 0 errors, 2026-08-20)
 - [x] Linting (`npm run lint` — 0 errors, 2026-08-20)
 - [ ] Authorization/tenant-isolation tests (only one company exists
       currently, so cross-tenant isolation is architecturally present but
-      not yet exercised by a test with two companies)
+      not yet exercised by a test with two companies). Exception:
+      `SuppressionEntry` company-scoping is unit-tested directly
+      (`src/lib/suppression.test.ts`) since every query is asserted to
+      include `companyId` — this covers the query-construction logic but is
+      not a substitute for a real two-company end-to-end test.
 - [ ] Component-level UI tests
 - [ ] **(gap, audit)** Additional e2e scenarios: reschedule flow, lost
       outcome, no-show, second-company isolation — only the single happy

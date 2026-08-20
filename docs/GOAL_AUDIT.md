@@ -191,7 +191,7 @@ IMPLEMENTED** · **BLOCKED BY EXTERNAL CREDENTIALS OR SERVICES**
 | Email abstraction | COMPLETE AND WORKING | `CommunicationProvider` interface, swappable | — | — | — |
 | SMS abstraction | COMPLETE AND WORKING | Same interface, `channel: "sms"` | — | — | — |
 | Consent handling | COMPLETE AND WORKING | `canSend()` gates every send on `emailConsent`/`smsConsent`/`optedOutAt`, unit-tested | — | — | — |
-| Suppression/opt-out handling | PARTIALLY IMPLEMENTED | Per-lead `optedOutAt` works for that lead | **No company/global suppression list** — a re-entered lead under a new visitor id wouldn't be suppressed (`docs/DATA_MODEL.md`) | **P0 for real send volume** | Add `SuppressionEntry` before live provider goes live |
+| Suppression/opt-out handling | COMPLETE AND WORKING (fixed 2026-08-20 — Step 9) | Durable, company-scoped `SuppressionEntry` table keyed by normalized email/phone (`src/lib/suppression.ts`), checked by the shared send gate (`sendIfAllowed`, used by every send call site) *before* per-lead consent, and by lead creation/contact capture (`POST /api/leads`) so a suppressed contact can't reactivate `smsConsent`/`emailConsent` under a new `Lead`/`visitorId`. CRM opt-out (`PATCH /api/leads/[id]` `{ optedOut: true }`) now persists into `SuppressionEntry`. Verified live: `e2e/suppression.spec.ts` — opt-out persists, a brand-new Lead with the same email/phone stays suppressed even while re-requesting consent, an unrelated contact is unaffected. Unit-tested: normalization, tenant-scoping, the shared-gate rejection path (`src/lib/suppression.test.ts`, 15 tests). | No suppression-management UI (opt-out is still only reachable via direct API call — there was no UI for it before this change either, so this is not a regression) and no un-suppress/re-consent flow. No distinction between marketing and transactional sends — the current system has none (every send, including booking confirmations, is gated identically), so suppression blocks all of them uniformly; this matches pre-existing `canSend` behavior and was deliberately not changed as part of this fix — see "Known gaps" below. | — | Add a suppression-management UI and a deliberate un-suppress flow when the CRM needs one; revisit the marketing/transactional distinction only if the business asks for transactional sends to bypass suppression |
 | Live email/SMS provider | BLOCKED BY EXTERNAL CREDENTIALS OR SERVICES | `src/lib/communications.ts` only has a console-logging dev provider | No vendor chosen/contracted (deliberately, per `docs/ARCHITECTURE.md`) | P0 before real leads are contacted | Choose a vendor (e.g. an ESP + Twilio-compatible SMS API), obtain credentials, implement `CommunicationProvider` |
 | Communication delivery log | NOT IMPLEMENTED | No `Communication` table; sends aren't persisted (`docs/DATA_MODEL.md`) | No queryable record of what was actually sent | P1, must precede live provider | Add the table before wiring a live provider |
 
@@ -238,9 +238,12 @@ toward a safe production launch.
    Analytics). These are real state changes already happening in the app
    that are invisible to the analytics the dashboard/CRM timeline is built
    to show. Cheap to fix, high value for trusting the funnel data.
-3. **Add `SuppressionEntry`** (Communications, P0). This is the one gap
-   that's a genuine compliance exposure the moment real outbound messages
-   start going out — must exist before any live provider is wired up.
+3. ~~**Add `SuppressionEntry`**~~ **DONE (2026-08-20, Step 9).** Durable,
+   company-scoped, normalized-email/phone suppression now exists and is
+   enforced at the shared send gate and at lead creation. See the
+   Communications table above and `TASKS.md` for full detail. Behaviorally
+   verified against the real dev DB (`e2e/suppression.spec.ts`) and via the
+   full test/lint/typecheck/build/e2e suite, all passing.
 4. **Add a `Communication` delivery log** (Communications). Needed for the
    same reason — operational visibility and recordkeeping before a live
    provider goes live.

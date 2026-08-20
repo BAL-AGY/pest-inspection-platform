@@ -149,12 +149,37 @@ states): `docs/STATES.md`.
 `src/lib/communications.ts` defines a `CommunicationProvider` interface
 (`send(message)`) with a swappable singleton (`getProvider`/`setProvider`)
 and a console-logging dev implementation as the only one wired up today —
-no live vendor is configured or assumed. Every send goes through
-`sendIfConsented`, which checks `canSend()` (opt-out, then per-channel
-consent) before the provider is ever invoked, so consent cannot be
-bypassed by a new call site. **Gap**: sends are not persisted anywhere
-(no `Communication` row) — see `docs/DATA_MODEL.md` for the recommended
-fix before a live provider is wired in.
+no live vendor is configured or assumed. `canSend()`/`sendIfConsented()`
+remain the pure, per-lead consent/opt-out gate. **Gap**: sends are not
+persisted anywhere (no `Communication` row) — see `docs/DATA_MODEL.md` for
+the recommended fix before a live provider is wired in.
+
+`src/lib/suppression.ts` (added 2026-08-20, Step 9) sits in front of that
+gate as the actual call-site entry point: `sendIfAllowed()` checks the
+durable, company-scoped `SuppressionEntry` table (normalized email/phone)
+*before* falling through to `sendIfConsented()`, so a contact who opted out
+stays suppressed even under a brand new `Lead`/`visitorId`, which
+`Lead.optedOutAt` alone could not guarantee. Every send call site
+(`POST /api/appointments`, the reschedule action in
+`PATCH /api/appointments/[id]`, and `cancelAppointmentAndNotify()`) uses
+`sendIfAllowed()`, not `sendIfConsented()` directly. `POST /api/leads` also
+checks suppression at write time (via `suppressedChannels()`) so a
+suppressed contact's `smsConsent`/`emailConsent` can't be reactivated by
+resubmitting the funnel, and so `optedOutAt` is visible on the new Lead row
+immediately rather than only surfacing the next time a send is attempted.
+This module intentionally breaks from the "pure lib, no Prisma" convention
+used by `communications.ts` itself — it's a persistence-backed orchestration
+layer, the same category as `appointment-actions.ts`, not business logic
+that needs to run without a database. `src/lib/suppression.test.ts` unit
+tests normalization and the gate's control flow with a mocked Prisma client;
+`e2e/suppression.spec.ts` exercises the real persistence path against the
+dev DB. **Known limitation, deliberately not addressed by this change**:
+the current system has no marketing-vs-transactional message distinction —
+every send, including booking confirmations and reschedule/cancellation
+notices, is gated identically — so suppression blocks all of them
+uniformly, matching pre-existing `canSend` behavior. A transactional-bypass
+would be a real product decision, not a data-model gap, and wasn't asked
+for.
 
 ### Attribution architecture
 
@@ -219,6 +244,7 @@ src/
     attribution.ts             UTM/click-id/referrer parsing
     visitor.ts                 Client-side visitor/lead id + track() helper
     communications.ts          Provider abstraction, consent gate, templates
+    suppression.ts                Durable cross-lead suppression + shared send gate
     analytics.ts                 Pure funnel/cost/CAC/ROAS calculations
     dashboard-metrics.ts          Prisma-backed aggregation using analytics.ts
     *.test.ts                     Vitest unit tests, one per lib module above
@@ -227,6 +253,8 @@ e2e/
   full-funnel.spec.ts    Playwright: traffic → funnel → lead → scoring →
                            booking → double-booking prevention → CRM →
                            completion → won → dashboard
+  suppression.spec.ts    Playwright: opt-out persists across a brand new
+                           Lead/visitorId, unrelated contact unaffected
 
 docs/
   ARCHITECTURE.md   This file — stack + system architecture decision record
@@ -285,10 +313,10 @@ Consolidated from this review's read of `docs/DATA_MODEL.md`,
 part of this review — design/documentation only. Ordered roughly by
 priority:
 
-1. **No suppression list.** Opt-out is tracked per-`Lead`, not
-   company/global by phone or email — a re-entered lead under a new
-   `visitorId` wouldn't be suppressed. Highest-priority gap given the
-   compliance boundaries below. → `docs/DATA_MODEL.md` **SuppressionEntry**.
+1. ~~**No suppression list.**~~ **Fixed 2026-08-20 (Step 9).** Durable,
+   company-scoped `SuppressionEntry` table, checked by the shared send gate
+   and by lead creation — see the Messaging provider abstraction section
+   above and `docs/DATA_MODEL.md` **SuppressionEntry**.
 2. **No Communication log.** Sends go through a real, consent-gated
    provider abstraction but are never persisted — no queryable record of
    what was actually sent. Should exist before a live provider is wired

@@ -180,16 +180,36 @@ Sufficient for "can we message this lead right now" (the only question
 granted, source, at)` table if consent needs to be audited over time
 (granted → revoked → re-granted) rather than just checked in the present.
 
-### SuppressionEntry — does not exist (compliance gap)
-Opt-out (`Lead.optedOutAt`) is scoped to a single `Lead` row. There is
-**no company-wide (or global) suppression list keyed by phone/email**, so
-a person who opts out and later re-enters the funnel under a new
-`visitorId` (new anonymous session → new `Lead`) would not automatically
-be suppressed. Given CLAUDE.md's explicit TCPA/CAN-SPAM compliance
-boundary, this is the single highest-priority data-model gap identified
-in this review: a `SuppressionEntry(companyId, channel, contactValue,
-suppressedAt, reason)` table, checked in `canSend`/`sendIfConsented`
-*before* checking the lead's own consent fields, closes it.
+### SuppressionEntry — implemented 2026-08-20 (Step 9)
+`SuppressionEntry(companyId, channel, identifierType, identifierValue,
+reason, source, metadata?, createdAt)`, unique on `(companyId, channel,
+identifierType, identifierValue)`. `identifierValue` is a normalized email
+(trimmed/lowercased — deliberately not alias-folded, so `user+tag@` and
+`u.ser@` stay distinct) or phone (digits-only, US/Canada country code
+stripped) — see `src/lib/suppression.ts`. `channel` is `"email"`, `"sms"`,
+or `"all"`; a blanket opt-out (the only kind the current system produces,
+matching `canSend`'s undifferentiated `optedOutAt` semantics) writes
+`channel: "all"` entries for every identifier the contact has.
+
+Checked in two places:
+- **Send time**: `sendIfAllowed()` (the new shared gate — every send call
+  site uses this instead of calling `communications.sendIfConsented`
+  directly) checks `SuppressionEntry` before falling through to the
+  existing per-lead `canSend` consent check.
+- **Lead-write time**: `POST /api/leads` checks suppression by the
+  request's normalized email/phone and refuses to set
+  `smsConsent`/`emailConsent` to `true` for a suppressed identifier, even
+  if the request explicitly asked for consent — this is what actually
+  closes the "re-enter the funnel under a new visitorId" gap this table
+  was designed for, independent of the send-time check.
+
+Written to on CRM opt-out (`PATCH /api/leads/[id]` `{ optedOut: true }`).
+Tenant-scoped like every other table (`companyId` in every query).
+**Limitation carried over from the existing system, not introduced by this
+table**: there is no marketing-vs-transactional distinction anywhere in
+this codebase, so a suppression entry blocks all sends uniformly (including
+booking confirmations) — see `docs/ARCHITECTURE.md`'s Messaging provider
+abstraction section.
 
 ### PipelineEvent — covered by AuditLog + FunnelEvent, not a third table
 Status transitions are audit-logged generically via `AuditLog`
@@ -248,6 +268,7 @@ Company 1─* FunnelEvent
 Company 1─* Appointment
 Company 1─* MarketingSpend
 Company 1─* AuditLog
+Company 1─* SuppressionEntry
 
 Lead 1─* LeadNote
 Lead 1─* Appointment
@@ -279,7 +300,7 @@ User 1─* AuditLog  (userId nullable — system-driven changes)
 | AvailabilityRule | `Company` scalar fields, company-wide not per-inspector |
 | Communication | **not implemented — see gap above** |
 | Consent | `Lead` consent fields, current-state only |
-| SuppressionEntry | **not implemented — compliance gap, see above** |
+| SuppressionEntry | `SuppressionEntry` — implemented 2026-08-20, see above |
 | PipelineEvent | `AuditLog` + `FunnelEvent`, inconsistent coverage |
 | CustomerOutcome | merged into `Lead` |
 | MarketingSpend | `MarketingSpend` |

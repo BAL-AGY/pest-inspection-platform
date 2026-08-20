@@ -6,10 +6,8 @@ import { getActiveCompany, parseBusinessHours, parseServiceZipCodes } from "@/li
 import { assertSlotBookable, DoubleBookingError } from "@/lib/scheduling";
 import { isInServiceArea } from "@/lib/qualification";
 import { requireSession } from "@/lib/require-session";
-import {
-  MESSAGE_TEMPLATES,
-  sendIfConsented,
-} from "@/lib/communications";
+import { MESSAGE_TEMPLATES } from "@/lib/communications";
+import { sendIfAllowed } from "@/lib/suppression";
 
 const bookSchema = z.object({
   leadId: z.string().min(1),
@@ -130,24 +128,24 @@ export async function POST(req: NextRequest) {
   };
   const name = lead.firstName ?? "there";
   if (lead.email) {
-    await sendIfConsented(
+    await sendIfAllowed(
       {
         channel: "email",
         to: lead.email,
         subject: "Your free home pest inspection is confirmed",
         body: MESSAGE_TEMPLATES.appointmentConfirmation({ name, when }),
       },
-      consent,
+      { companyId: company.id, consent },
     );
   }
   if (lead.phone) {
-    await sendIfConsented(
+    await sendIfAllowed(
       {
         channel: "sms",
         to: lead.phone,
         body: MESSAGE_TEMPLATES.appointmentConfirmation({ name, when }),
       },
-      consent,
+      { companyId: company.id, consent },
     );
   }
 

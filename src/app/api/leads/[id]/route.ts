@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { requireSession } from "@/lib/require-session";
 import { LEAD_STATUSES } from "@/lib/pipeline";
+import { recordSuppression } from "@/lib/suppression";
 
 export async function GET(
   _req: NextRequest,
@@ -80,6 +81,21 @@ export async function PATCH(
         entityId: id,
         metadata: JSON.stringify({ from: existing.status, to: resolvedStatus }),
       },
+    });
+  }
+
+  if (optedOut && (existing.email || existing.phone)) {
+    // Persist the opt-out into the durable, cross-lead suppression system —
+    // not just onto this one Lead row — so later leads/sessions from the
+    // same contact inherit the protection (see docs/GOAL_AUDIT.md).
+    await recordSuppression({
+      companyId: session.companyId,
+      channel: "all", // matches the existing undifferentiated optedOutAt semantics
+      email: existing.email,
+      phone: existing.phone,
+      reason: "opted_out",
+      source: "crm_manual_optout",
+      metadata: { leadId: id },
     });
   }
 

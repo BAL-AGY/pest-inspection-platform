@@ -41,13 +41,14 @@ model Company {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  users          User[]
-  inspectors     Inspector[]
-  leads          Lead[]
-  appointments   Appointment[]
-  funnelEvents   FunnelEvent[]
-  marketingSpend MarketingSpend[]
-  auditLogs      AuditLog[]
+  users              User[]
+  inspectors         Inspector[]
+  leads              Lead[]
+  appointments       Appointment[]
+  funnelEvents       FunnelEvent[]
+  marketingSpend     MarketingSpend[]
+  auditLogs          AuditLog[]
+  suppressionEntries SuppressionEntry[]
 }
 
 // ---------------------------------------------------------------------------
@@ -247,6 +248,31 @@ model MarketingSpend {
   createdAt DateTime @default(now())
 
   @@index([companyId, source, periodStart])
+}
+
+// ---------------------------------------------------------------------------
+// Suppression (durable, cross-lead/cross-session opt-out protection)
+// ---------------------------------------------------------------------------
+
+model SuppressionEntry {
+  id        String  @id @default(cuid())
+  companyId String
+  company   Company @relation(fields: [companyId], references: [id])
+
+  channel String // "email" | "sms" | "all" ("all" = blanket opt-out, matches
+  // the existing undifferentiated Lead.optedOutAt semantics — see canSend)
+
+  identifierType  String // "email" | "phone"
+  identifierValue String // normalized (see src/lib/suppression.ts)
+
+  reason String // e.g. "opted_out"
+  source String // e.g. "crm_manual_optout" — where the suppression originated
+
+  metadata  String? // JSON-encoded extra context
+  createdAt DateTime @default(now())
+
+  @@unique([companyId, channel, identifierType, identifierValue])
+  @@index([companyId, identifierType, identifierValue])
 }
 
 // ---------------------------------------------------------------------------
