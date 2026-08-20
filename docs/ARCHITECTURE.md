@@ -3,6 +3,19 @@
 Status: **Finalized for v1 build.** Changes to any decision below must be made
 here first, with rationale, before code changes that contradict it.
 
+2026-08-20 review note: the stack/data-model/compliance decisions below were
+already implemented and finalized when this review ran. This pass verified
+the actual implementation against the decisions recorded here, added the
+System Architecture and Project Structure sections below, and produced three
+companion docs with full detail: `docs/DATA_MODEL.md` (entity-by-entity
+detail and where the schema simplifies vs. a maximal model),
+`docs/EVENTS.md` (event taxonomy, exact firing sites, gaps against the
+requested taxonomy), and `docs/STATES.md` (Lead/Appointment transition logic
+as actually coded, including two inconsistencies worth knowing about). See
+**Known gaps and near-term recommendations** near the end of this file for
+the consolidated findings. No application code changed as part of this
+review.
+
 ## Guiding principle
 
 Every decision below is driven by the north star: **cost per qualified
@@ -28,6 +41,200 @@ and report real numbers, over a polished-looking demo.
 | Testing | Vitest (unit/integration) + Playwright (end-to-end) | Vitest covers scoring, qualification, scheduling/double-booking, attribution, and analytics calculations as pure, deterministic logic. Playwright drives the actual browser through the full lead→inspection→outcome journey against the running app. |
 | Deployment target | Node-compatible host running the Next.js production build (e.g. Vercel or a container) | No vendor contracted. `next build` / `next start` must pass; deployment config stays host-agnostic (env vars, no vendor-specific lock-in beyond what Next.js itself requires). |
 
+## System architecture
+
+### Frontend architecture
+
+Single Next.js App Router tree serves two distinct surfaces from one
+codebase: the public, SEO-relevant acquisition funnel (`src/app/page.tsx`,
+`src/app/inspection/page.tsx`) rendered server-first, and the authenticated
+owner dashboard (`src/app/dashboard/**`) which mixes server components for
+data-heavy reads with small client islands for interactive forms
+(status-change selects, marketing-spend entry). There is no separate SPA
+build or separate dashboard deployment — one `next build` produces both.
+
+### Backend architecture
+
+No separate backend service. Next.js Route Handlers under `src/app/api/**`
+are the entire backend, calling Prisma directly. Business logic that needs
+to be correct independent of HTTP — scoring, qualification, scheduling,
+attribution, analytics, communications consent — is factored into pure
+functions in `src/lib/*.ts` that take/return plain data and never import
+Prisma or Next request/response types, so they're unit-testable without a
+server or database (`src/lib/*.test.ts`, run via Vitest). Route handlers are
+thin: parse/validate with Zod, call the pure function, persist with Prisma,
+respond. `src/lib/prisma.ts` is the single shared client (dev-mode global
+singleton to survive Next.js hot-reload without exhausting connections).
+
+### Database
+
+SQLite for this environment's dev/test (no local Postgres available);
+PostgreSQL is the recorded production target. See the Stack table above for
+the full rationale and the deliberate-cutover plan. Full entity/relationship
+detail: `docs/DATA_MODEL.md`.
+
+### ORM
+
+Prisma. Migrations live in `prisma/migrations/`; `prisma/seed.ts` seeds one
+`Company` plus a default inspector for local/dev use.
+
+### Authentication
+
+Auth.js (NextAuth) v5, credentials provider, JWT session strategy
+(`src/lib/auth.ts`). Passwords hashed with bcrypt. `companyId` and `role`
+are embedded in the JWT/session via the `jwt`/`session` callbacks so every
+authenticated request can resolve tenant + role without an extra DB round
+trip.
+
+### Authorization
+
+Coarse-grained today: `src/lib/require-session.ts` resolves
+`{ companyId, role, email }` or `null` for every protected route/page,
+and every Prisma query in a protected route is scoped by that `companyId`
+(never by a client-supplied tenant id). `role` (`owner | staff`) is carried
+in the session but not yet used to gate any specific action — there is no
+route or UI control today that behaves differently for `staff` vs `owner`.
+That's an open item, not a security hole (both roles are staff of the same
+single company in v1), but worth closing before a second `staff` account
+with intentionally narrower access is created.
+
+### API strategy
+
+REST-ish Route Handlers, one per resource-ish concern
+(`/api/leads`, `/api/leads/[id]`, `/api/appointments`,
+`/api/appointments/[id]`, `/api/availability`, `/api/track`,
+`/api/marketing-spend`, `/api/analytics/funnel`, `/api/dashboard/metrics`).
+No GraphQL, no tRPC — deliberately, to keep the request/response shape
+directly inspectable and avoid a second schema layer for a backend this
+size. Every input is validated with Zod before touching Prisma.
+
+### Server/client boundaries
+
+Public funnel pages and dashboard read views are server components/route
+handlers by default. Client components (`"use client"`) are used only
+where interactivity requires it: the qualification funnel's step-by-step
+UI, the visitor-id/attribution capture (`src/lib/visitor.ts`, which touches
+`localStorage` and thus must run client-side), and dashboard forms/selects
+that submit actions. No client component talks to Prisma directly — all
+persistence goes through a route handler or a server action.
+
+### Analytics / event tracking
+
+Homegrown, not a third-party analytics vendor (consistent with "no
+fabricated... third-party integrations" in Compliance boundaries — nothing
+is silently phoning out to GA/Segment/etc.). Every trackable moment is a
+row in the append-only `FunnelEvent` table, written either client-side via
+`track()` → `POST /api/track` (fresh attribution resolved per hit) or
+server-side inline in the route handler that caused the state change
+(reuses the lead's stored first-touch attribution). Full taxonomy, firing
+sites, and attribution-completeness caveats: `docs/EVENTS.md`. Funnel
+conversion and cost-per-stage metrics are computed from this table by pure
+functions in `src/lib/analytics.ts`, never fabricated — a stage with no
+data renders as unavailable, not zero.
+
+### Scheduling architecture
+
+Pure, DB-free candidate-slot generation and conflict-checking in
+`src/lib/scheduling.ts` (business hours × duration × existing bookings ×
+daily capacity), wrapped by `POST /api/appointments` and
+`GET /api/availability` for persistence. Double-booking is prevented twice:
+an application-level overlap check before write, and a DB-level
+`@@unique([inspectorId, scheduledStart])` constraint as the race guard,
+both exercised in `e2e/full-funnel.spec.ts`. Full transition detail
+(including two inconsistencies between the declared and actual appointment
+states): `docs/STATES.md`.
+
+### Messaging provider abstraction
+
+`src/lib/communications.ts` defines a `CommunicationProvider` interface
+(`send(message)`) with a swappable singleton (`getProvider`/`setProvider`)
+and a console-logging dev implementation as the only one wired up today —
+no live vendor is configured or assumed. Every send goes through
+`sendIfConsented`, which checks `canSend()` (opt-out, then per-channel
+consent) before the provider is ever invoked, so consent cannot be
+bypassed by a new call site. **Gap**: sends are not persisted anywhere
+(no `Communication` row) — see `docs/DATA_MODEL.md` for the recommended
+fix before a live provider is wired in.
+
+### Attribution architecture
+
+First-touch UTM/click-id parsing (`src/lib/attribution.ts`) resolved at
+the landing page and persisted once on `Lead` (`source/medium/campaign/
+content/term/landingPage/clickId`), never overwritten on subsequent visits
+by the same lead. `FunnelEvent` rows carry the same columns, but — see
+`docs/EVENTS.md` — only the two client-fired event types currently get
+attribution resolved fresh per event; the rest inherit the lead's
+first-touch values or carry none. Cost-per-lead/MQL/SQL/booked/CAC/ROAS
+are computed by matching `MarketingSpend.source`/`campaign` strings against
+lead/event attribution, never fabricated when spend data is absent.
+
+### Deployment strategy
+
+See the Stack table above (Node-compatible host running `next build`/
+`next start`; no vendor contracted). No Dockerfile or hosting-specific
+config exists yet in this repo — see TASKS.md's Deployment milestone.
+
+## Project structure
+
+```
+prisma/
+  schema.prisma        Data model (see docs/DATA_MODEL.md)
+  migrations/           Generated migrations
+  seed.ts               Seeds one Company + default Inspector for local/dev
+
+src/
+  app/
+    page.tsx             Public landing page ("/")
+    inspection/page.tsx  Qualification funnel + booking flow
+    login/page.tsx        Staff login
+    layout.tsx, globals.css
+    dashboard/
+      layout.tsx
+      page.tsx                Owner overview (funnel counts, cost metrics)
+      leads/page.tsx          Pipeline board
+      leads/[id]/page.tsx     Lead detail: profile, notes, timeline, status/outcome override, appointment actions
+      calendar/page.tsx       Day/week/month appointment views
+      marketing/page.tsx      Marketing-spend entry
+    api/
+      leads/route.ts                  Qualification/contact upsert (public), lead list (staff)
+      leads/[id]/route.ts             Lead detail (staff), status/outcome override
+      leads/[id]/notes/route.ts       Add note
+      appointments/route.ts           Book (public-eligible via SQL gate), list (staff)
+      appointments/[id]/route.ts      Reschedule/cancel/no-show/complete
+      availability/route.ts           Candidate slot list for an SQL lead
+      track/route.ts                  Funnel event ingestion
+      marketing-spend/route.ts        Spend entry
+      analytics/funnel/route.ts       Funnel conversion API
+      dashboard/metrics/route.ts      Dashboard metrics API
+      auth/[...nextauth]/route.ts     Auth.js handlers
+  lib/
+    prisma.ts             Shared Prisma client
+    auth.ts                Auth.js config
+    require-session.ts     Session → {companyId, role} resolver
+    company.ts              Active-company resolver + JSON-config parsers
+    pipeline.ts              Canonical status/event-type string unions (single source of truth)
+    qualification.ts         Question set, next-question logic, service-area check
+    scoring.ts                Configurable scoring rules, classification
+    scheduling.ts             Slot generation, conflict/capacity checks
+    attribution.ts             UTM/click-id/referrer parsing
+    visitor.ts                 Client-side visitor/lead id + track() helper
+    communications.ts          Provider abstraction, consent gate, templates
+    analytics.ts                 Pure funnel/cost/CAC/ROAS calculations
+    dashboard-metrics.ts          Prisma-backed aggregation using analytics.ts
+    *.test.ts                     Vitest unit tests, one per lib module above
+
+e2e/
+  full-funnel.spec.ts    Playwright: traffic → funnel → lead → scoring →
+                           booking → double-booking prevention → CRM →
+                           completion → won → dashboard
+
+docs/
+  ARCHITECTURE.md   This file — stack + system architecture decision record
+  DATA_MODEL.md      Entity-by-entity detail and simplification rationale
+  EVENTS.md            Event taxonomy and firing sites
+  STATES.md             Lead/Appointment transition logic as implemented
+```
+
 ## Multi-tenancy
 
 Single company is deployed for v1, but every tenant-owned table carries a
@@ -36,6 +243,10 @@ sharing, no premature tenant-admin UI, no billing/plan system — just a data
 model that will not need a breaking migration to onboard a second company.
 
 ## Data model (high level)
+
+Full entity-by-entity detail, relationships, and the rationale for every
+place this schema simplifies a maximal entity list into fewer tables:
+`docs/DATA_MODEL.md`. Summary:
 
 - `Company` — the pest control business (branding, service area, business
   hours, scoring config, cost assumptions).
@@ -66,6 +277,49 @@ appointment-availability/double-booking logic are implemented as pure,
 independently testable functions operating on plain data — not buried in UI
 components or route handlers — so they can be unit tested directly and
 reused between the public funnel, the CRM, and the dashboard.
+
+## Known gaps and near-term recommendations
+
+Consolidated from this review's read of `docs/DATA_MODEL.md`,
+`docs/EVENTS.md`, and `docs/STATES.md`. None of these are implemented as
+part of this review — design/documentation only. Ordered roughly by
+priority:
+
+1. **No suppression list.** Opt-out is tracked per-`Lead`, not
+   company/global by phone or email — a re-entered lead under a new
+   `visitorId` wouldn't be suppressed. Highest-priority gap given the
+   compliance boundaries below. → `docs/DATA_MODEL.md` **SuppressionEntry**.
+2. **No Communication log.** Sends go through a real, consent-gated
+   provider abstraction but are never persisted — no queryable record of
+   what was actually sent. Should exist before a live provider is wired
+   up. → `docs/DATA_MODEL.md` **Communication**.
+3. **Three appointment-lifecycle events are missing from the funnel log**
+   (reschedule, cancel, no-show) — `Appointment.status` itself is correct,
+   but these transitions are invisible to funnel/attribution analytics.
+   → `docs/EVENTS.md`.
+4. **Attribution on most events is first-touch-inherited, not fresh** —
+   true multi-touch/last-touch attribution isn't derivable from the event
+   log today, only first-touch (which is reliable). → `docs/EVENTS.md`
+   **Attribution completeness**.
+5. **`Appointment.status = "rescheduled"` is declared but never set**
+   (reschedule happens in-place); `rescheduledFromId` is similarly unused.
+   Either drop both or actually use them. → `docs/STATES.md`.
+6. **No lead-score history/audit trail** — score/classification changes
+   aren't written to `AuditLog`, unlike status changes. → `docs/DATA_MODEL.md`
+   **LeadScore**.
+7. **No server-side Lead status transition guard** — manual overrides can
+   set any status from any status; may be intentional but should be a
+   documented choice. → `docs/STATES.md`.
+8. **`role` is carried but not enforced** — `owner` vs `staff` doesn't
+   currently gate any route or UI differently.
+9. **Instrumentation gaps against the requested event taxonomy**:
+   `cta_clicked` and `assessment_step_completed` are not implemented, so
+   CTA effectiveness and in-funnel step drop-off aren't measurable yet.
+   → `docs/EVENTS.md`.
+
+None of these block the platform from functioning end-to-end (TASKS.md's
+verified-working claims stand); they're the gaps between "works" and
+"complete/auditable/compliant at scale."
 
 ## Compliance boundaries
 
