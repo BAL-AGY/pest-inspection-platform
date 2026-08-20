@@ -5,10 +5,16 @@ import { prisma } from "@/lib/prisma";
 import {
   getActiveCompany,
   parseBusinessHours,
+  parseCompanyTimeZone,
   parseServiceZipCodes,
   parseSupportedPests,
 } from "@/lib/company";
-import { assertSlotBookable, CapacityExceededError, DoubleBookingError } from "@/lib/scheduling";
+import {
+  appointmentCompanyDayRange,
+  assertSlotBookable,
+  CapacityExceededError,
+  DoubleBookingError,
+} from "@/lib/scheduling";
 import { deriveQualificationState, parseStoredQualificationAnswers } from "@/lib/qualification";
 import { requireSession } from "@/lib/require-session";
 import { MESSAGE_TEMPLATES } from "@/lib/communications";
@@ -94,18 +100,15 @@ export async function POST(req: NextRequest) {
   // shortened, or lengthened appointment (see docs/GOAL_AUDIT.md).
   const requestedEnd = new Date(requestedStart.getTime() + company.inspectionDurationMinutes * 60_000);
   const businessHours = parseBusinessHours(company);
-
-  const dayStart = new Date(requestedStart);
-  dayStart.setHours(0, 0, 0, 0);
-  const dayEnd = new Date(requestedStart);
-  dayEnd.setHours(23, 59, 59, 999);
+  const timeZone = parseCompanyTimeZone(company);
+  const { start: dayStart, end: dayEnd } = appointmentCompanyDayRange(requestedStart, timeZone);
 
   const loadDayAppointments = async (client: Prisma.TransactionClient | typeof prisma) => {
     const rows = await client.appointment.findMany({
       where: {
         companyId: company.id,
         status: { in: ["booked", "rescheduled"] },
-        scheduledStart: { gte: dayStart, lte: dayEnd },
+        scheduledStart: { gte: dayStart, lt: dayEnd },
       },
       select: { scheduledStart: true, scheduledEnd: true },
     });
@@ -119,6 +122,7 @@ export async function POST(req: NextRequest) {
       businessHours,
       maxDailyInspections: company.maxDailyInspections,
       durationMinutes: company.inspectionDurationMinutes,
+      timeZone,
     });
   } catch (err) {
     if (err instanceof DoubleBookingError) {
@@ -149,6 +153,7 @@ export async function POST(req: NextRequest) {
           businessHours,
           maxDailyInspections: company.maxDailyInspections,
           durationMinutes: company.inspectionDurationMinutes,
+          timeZone,
         });
 
         const created = await tx.appointment.create({
@@ -215,7 +220,7 @@ export async function POST(req: NextRequest) {
     day: "numeric",
     hour: "numeric",
     minute: "2-digit",
-    timeZone: company.timezone,
+    timeZone,
   });
   const consent = {
     emailConsent: lead.emailConsent,

@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import {
   getActiveCompany,
   parseBusinessHours,
+  parseCompanyTimeZone,
   parseServiceZipCodes,
   parseSupportedPests,
 } from "@/lib/company";
@@ -10,10 +11,14 @@ import { generateCandidateSlots, filterAvailableSlots } from "@/lib/scheduling";
 import { deriveQualificationState, parseStoredQualificationAnswers } from "@/lib/qualification";
 import { verifyLeadToken } from "@/lib/funnel-capability";
 import { enforceRateLimit, rateLimitResponse, trustedClientAddress } from "@/lib/rate-limit";
+import { addLocalCalendarDays, companyDayRange, localDateKey } from "@/lib/timezone";
 
 export async function GET(req: NextRequest) {
   const leadId = req.nextUrl.searchParams.get("leadId");
-  const days = Number(req.nextUrl.searchParams.get("days") ?? "14");
+  const requestedDays = Number(req.nextUrl.searchParams.get("days") ?? "14");
+  const days = Number.isInteger(requestedDays) && requestedDays >= 1 && requestedDays <= 180
+    ? requestedDays
+    : 14;
   // Sent as a header, not a query param, so it doesn't end up in browser
   // history / server access logs the way the leadId query param already
   // does (see src/lib/funnel-capability.ts).
@@ -73,8 +78,13 @@ export async function GET(req: NextRequest) {
   }
 
   const now = new Date();
+  const timeZone = parseCompanyTimeZone(company);
   const rangeStart = now;
-  const rangeEnd = new Date(now.getTime() + days * 24 * 60 * 60 * 1000);
+  const appointmentQueryStart = companyDayRange(now, timeZone).start;
+  const rangeEnd = companyDayRange(
+    addLocalCalendarDays(localDateKey(now, timeZone), days),
+    timeZone,
+  ).start;
 
   const businessHours = parseBusinessHours(company);
   const candidates = generateCandidateSlots({
@@ -82,6 +92,7 @@ export async function GET(req: NextRequest) {
     rangeEnd,
     durationMinutes: company.inspectionDurationMinutes,
     businessHours,
+    timeZone,
     now,
   });
 
@@ -89,7 +100,9 @@ export async function GET(req: NextRequest) {
     where: {
       companyId: company.id,
       status: { in: ["booked", "rescheduled"] },
-      scheduledStart: { gte: rangeStart, lte: rangeEnd },
+      // Include appointments earlier on the current company-local day: they
+      // still consume today's daily capacity even though their slot is past.
+      scheduledStart: { gte: appointmentQueryStart, lt: rangeEnd },
     },
     select: { scheduledStart: true, scheduledEnd: true },
   });
@@ -101,6 +114,7 @@ export async function GET(req: NextRequest) {
       end: a.scheduledEnd,
     })),
     maxDailyInspections: company.maxDailyInspections,
+    timeZone,
   });
 
   await prisma.funnelEvent.create({
@@ -117,5 +131,6 @@ export async function GET(req: NextRequest) {
 
   return NextResponse.json({
     slots: available.map((s) => ({ start: s.start.toISOString(), end: s.end.toISOString() })),
+    timeZone,
   });
 }

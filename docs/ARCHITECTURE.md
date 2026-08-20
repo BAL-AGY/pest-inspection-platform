@@ -185,6 +185,18 @@ daily capacity), wrapped by `POST /api/appointments`,
 two inconsistencies between the declared and actual appointment states):
 `docs/STATES.md`.
 
+**Company calendar and DST (Step 20).** `Company.timezone` is the
+authoritative validated IANA zone. `src/lib/timezone.ts`, backed by the
+date-fns v4 companion `@date-fns/tz`, converts company-local dates and wall
+times to UTC instants and creates local day/week query ranges. Slots are
+enumerated on the local wall-clock grid and stored as UTC instants. DST-gap
+times fail round-trip validation and are omitted; a fall-back wall time has
+one canonical first occurrence and the repeated second occurrence is rejected,
+so capacity cannot be duplicated. Booking and reschedule query the requested
+appointment's company-local `[midnight, next midnight)` range, which naturally
+spans 23 or 25 hours. Dashboard today/week and calendar grouping use the same
+helpers. See `docs/TIMEZONE.md`.
+
 **Concurrency and validation rework (2026-08-21, Step 15).** An
 independent audit (Codex) flagged, and direct code inspection confirmed,
 that the previous double-booking guard didn't actually work, and that
@@ -508,6 +520,7 @@ src/
     qualification.ts         Authoritative questions, validation, progression, eligibility
     scoring.ts                Configurable scoring rules, classification
     scheduling.ts             Slot generation, conflict/capacity/duration checks
+    timezone.ts               IANA-zone conversion, DST, local day/week ranges
     funnel-capability.ts        Public lead-ownership HMAC capability tokens
                                   (production-gated secret, TTL/expiry)
     attribution.ts             UTM/click-id/referrer parsing
@@ -665,19 +678,12 @@ priority:
     implemented in Step 17 to avoid redesigning the funnel's
     request/response contract in the same change as the IDOR/
     continuation/concurrency/duration fixes.
-13. **Business-hours/slot generation and dashboard "today"/"this week"
-    reporting windows use server-local time, not `company.timezone`**
-    (confirmed by direct code inspection of `src/lib/scheduling.ts` and
-    `src/lib/dashboard-metrics.ts` — `company.timezone` is used only for
-    *display* formatting, never for interpreting business-hours
-    boundaries or day cutoffs). If the production host's timezone differs
-    from a company's configured timezone (likely, since the deployment
-    target is a generic Node host, commonly UTC), slot availability and
-    "booked today" figures will be wrong by the offset and shift across
-    DST. **Not fixed in this pass** (out of scope for Step 15's three
-    named fixes) — needs a timezone-aware library
-    (`date-fns-tz`/`Temporal`) in both files before real multi-region or
-    non-UTC-server deployment.
+13. ~~**Business-hours/slot generation and dashboard reporting used
+    server-local time.**~~ **Fixed (Step 20).** Operational boundaries,
+    capacity grouping, and display now use validated `Company.timezone`
+    through `src/lib/timezone.ts`; DST behavior is explicit and tested.
+    Overnight hours remain unsupported and fail closed. See
+    `docs/TIMEZONE.md`.
 14. ~~**No rate limiting on public endpoints.**~~ **Implemented 2026-08-21
     (Step 18)** with centralized per-action policies, privacy-hashed
     identifiers, explicit trusted-proxy handling, and 429/Retry-After.

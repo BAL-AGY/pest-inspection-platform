@@ -8,24 +8,20 @@ import {
   computeShowRate,
   computeStageConversionRates,
 } from "./analytics";
+import { parseCompanyTimeZone } from "./company";
+import { companyDayRange, companyWeekRange } from "./timezone";
 
-function startOfDay(d: Date) {
-  const x = new Date(d);
-  x.setHours(0, 0, 0, 0);
-  return x;
-}
-function startOfWeek(d: Date) {
-  const x = startOfDay(d);
-  x.setDate(x.getDate() - x.getDay());
-  return x;
+export function dashboardOperationalRanges(now: Date, timeZone: string) {
+  const today = companyDayRange(now, timeZone);
+  const week = companyWeekRange(now, timeZone);
+  return { todayStart: today.start, tomorrowStart: today.end, weekStart: week.start, weekEnd: week.end };
 }
 
-export async function getDashboardMetrics(companyId: string) {
-  const now = new Date();
-  const todayStart = startOfDay(now);
-  const tomorrowStart = new Date(todayStart.getTime() + 24 * 60 * 60 * 1000);
-  const weekStart = startOfWeek(now);
-  const weekEnd = new Date(weekStart.getTime() + 7 * 24 * 60 * 60 * 1000);
+export async function getDashboardMetrics(companyId: string, now = new Date()) {
+  const company = await prisma.company.findUnique({ where: { id: companyId }, select: { timezone: true } });
+  if (!company) throw new Error("Company not found.");
+  const timeZone = parseCompanyTimeZone(company);
+  const { todayStart, tomorrowStart, weekStart, weekEnd } = dashboardOperationalRanges(now, timeZone);
 
   const [
     inspectionsToday,

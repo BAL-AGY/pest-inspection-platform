@@ -174,9 +174,7 @@ before this audit.
 ## 7. Scheduling
 
 - [x] Business-hours + duration + capacity-aware availability generation —
-      `src/lib/scheduling.ts`. Business-hours boundaries use server-local
-      time, not `company.timezone` — **(gap, audit — 2026-08-21 Codex,
-      not fixed in Step 15)**, see below.
+      `src/lib/scheduling.ts`, company-timezone authoritative as of Step 20.
 - [x] **(fixed 2026-08-21 — Step 15)** Booking with atomic double-booking
       prevention. An independent audit (OpenAI Codex) found, and a
       standalone verification script confirmed, that the prior DB-level
@@ -224,15 +222,13 @@ before this audit.
 - [ ] Multi-inspector load balancing / assignment rules
 - [ ] Per-inspector `AvailabilityRule` entity (today availability is
       company-wide, not per inspector)
-- [ ] **(gap, audit — 2026-08-21 Codex, not fixed in Step 15)**
-      Business-hours/slot generation (`src/lib/scheduling.ts`) and
-      dashboard "today"/"this week" reporting windows
-      (`src/lib/dashboard-metrics.ts`) interpret boundaries in
-      server-local time, never `company.timezone` (that field is used
-      only for display formatting). Wrong the moment the production
-      host's timezone differs from a company's configured timezone —
-      needs a timezone-aware library (`date-fns-tz`/`Temporal`) in both
-      files.
+- [x] **(fixed — Step 20)** Company-timezone and DST correctness.
+      Central `src/lib/timezone.ts` uses validated IANA `Company.timezone`
+      plus `@date-fns/tz`; slots, booking/reschedule validation, local-day
+      capacity queries, dashboard today/week ranges, calendar grouping,
+      and operational display all use the company calendar independent of
+      host/browser timezone. Nonexistent spring times are omitted and the
+      second fall-back occurrence is rejected. See `docs/TIMEZONE.md`.
 - [ ] **(gap, prior)** `Appointment.status = "rescheduled"` and
       `rescheduledFromId` are declared but never set by the reschedule
       action — either start using them or remove them — `docs/STATES.md`
@@ -382,7 +378,8 @@ before this audit.
       fail-closed behavior, TTL/expiry, future-dated-token rejection),
       production-startup env validation, and centralized rate-policy/store/
       proxy-trust behavior, plus qualification schema/progression/company-
-      eligibility behavior (101 tests, `npm run test` —
+      eligibility behavior plus company-calendar/DST scheduling and
+      reporting boundaries (111 tests, `npm run test` —
       re-verified passing 2026-08-21)
 - [x] End-to-end test of the full required journey — traffic → landing →
       funnel → lead → scoring → MQL/SQL → availability → booking →
@@ -421,6 +418,12 @@ before this audit.
       derivation, legitimate SQL and prospect outcomes, and availability/
       booking denial when persisted SQL is paired with incomplete answers.
       Full Playwright suite is now 24/24 passing.
+- [x] **(added — Step 20)** Machine-timezone-independent timezone/DST unit
+      coverage and live `e2e/timezone.spec.ts`: Central morning conversion,
+      local-day UTC boundaries, post-midnight grouping/capacity, before/
+      after-hours and closed-day booking rejection, spring gap, fall overlap,
+      dashboard today/week, calendar grouping, and reschedule rejection.
+      Full Playwright suite is now 25/25 passing.
 - [x] **(added 2026-08-20 — Step 9)** End-to-end test of durable suppression
       (`e2e/suppression.spec.ts`): opt-out persists, a brand new Lead under a
       new visitorId with the same email/phone stays suppressed and cannot

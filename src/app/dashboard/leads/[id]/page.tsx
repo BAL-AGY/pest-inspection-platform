@@ -4,6 +4,8 @@ import { requireSession } from "@/lib/require-session";
 import { prisma } from "@/lib/prisma";
 import { LEAD_STATUSES } from "@/lib/pipeline";
 import { cancelAppointmentAndNotify } from "@/lib/appointment-actions";
+import { parseCompanyTimeZone } from "@/lib/company";
+import { formatInCompanyTime } from "@/lib/timezone";
 
 export default async function LeadDetailPage({
   params,
@@ -23,6 +25,9 @@ export default async function LeadDetailPage({
     },
   });
   if (!lead) notFound();
+  const company = await prisma.company.findUnique({ where: { id: session.companyId } });
+  if (!company) notFound();
+  const timeZone = parseCompanyTimeZone(company);
 
   const answers = lead.qualificationAnswers ? JSON.parse(lead.qualificationAnswers) : {};
 
@@ -180,12 +185,13 @@ export default async function LeadDetailPage({
             <div key={a.id} className="bg-white border border-zinc-200 rounded-lg p-3 text-sm flex items-center justify-between gap-4 flex-wrap">
               <div>
                 <p className="font-medium">
-                  {new Date(a.scheduledStart).toLocaleString("en-US", {
+                  {formatInCompanyTime(a.scheduledStart, timeZone, {
                     weekday: "short",
                     month: "short",
                     day: "numeric",
                     hour: "numeric",
                     minute: "2-digit",
+                    timeZoneName: "short",
                   })}
                 </p>
                 <p className="text-zinc-500 text-xs">{a.status}</p>

@@ -1,14 +1,19 @@
-/**
- * Pure scheduling/availability logic. Kept free of Prisma/DB calls so it's
- * directly unit-testable; API routes wrap this with real persistence.
- */
+import {
+  addLocalCalendarDays,
+  companyDayRange,
+  isCanonicalLocalInstant,
+  localDateKey,
+  localDateTimeToInstant,
+  localWeekday,
+  parseLocalDateKey,
+  zonedDateTimeParts,
+} from "./timezone";
 
 export interface DayHours {
-  open: string; // "HH:mm", 24h
-  close: string; // "HH:mm", 24h
+  open: string;
+  close: string;
 }
 
-/** Keyed 0 (Sunday) - 6 (Saturday). `null` means closed that day. */
 export type BusinessHours = Record<number, DayHours | null>;
 
 export const DEFAULT_BUSINESS_HOURS: BusinessHours = {
@@ -26,86 +31,89 @@ export interface TimeRange {
   end: Date;
 }
 
-function parseHm(hm: string): { hours: number; minutes: number } {
-  const [hours, minutes] = hm.split(":").map(Number);
-  return { hours, minutes };
+function parseHm(hm: string): { hours: number; minutes: number; totalMinutes: number } {
+  const match = /^(\d{2}):(\d{2})$/.exec(hm);
+  if (!match) throw new Error("Invalid business-hours configuration.");
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  if (hours > 23 || minutes > 59) throw new Error("Invalid business-hours configuration.");
+  return { hours, minutes, totalMinutes: hours * 60 + minutes };
+}
+
+function wallTimeOnDate(dateKey: string, hm: string, timeZone: string): Date | null {
+  const date = parseLocalDateKey(dateKey);
+  const time = parseHm(hm);
+  return localDateTimeToInstant({ ...date, hour: time.hours, minute: time.minutes }, timeZone);
 }
 
 export function rangesOverlap(a: TimeRange, b: TimeRange): boolean {
   return a.start < b.end && b.start < a.end;
 }
 
-/**
- * Generates candidate inspection slots between `rangeStart` and `rangeEnd`,
- * honoring per-weekday business hours and appointment duration. Does not
- * know about existing bookings or capacity — see `filterAvailableSlots`.
- */
+/** Generate UTC instants from the company's local wall-clock slot grid. */
 export function generateCandidateSlots(params: {
   rangeStart: Date;
   rangeEnd: Date;
   durationMinutes: number;
   businessHours: BusinessHours;
+  timeZone: string;
   now?: Date;
 }): TimeRange[] {
-  const { rangeStart, rangeEnd, durationMinutes, businessHours } = params;
+  const { rangeStart, rangeEnd, durationMinutes, businessHours, timeZone } = params;
   const now = params.now ?? new Date();
   const slots: TimeRange[] = [];
+  let dateKey = localDateKey(rangeStart, timeZone);
+  const finalDateKey = localDateKey(rangeEnd, timeZone);
 
-  const cursor = new Date(rangeStart);
-  cursor.setHours(0, 0, 0, 0);
-
-  while (cursor <= rangeEnd) {
-    const hours = businessHours[cursor.getDay()];
+  while (dateKey <= finalDateKey) {
+    const hours = businessHours[localWeekday(dateKey)];
     if (hours) {
-      const { hours: openH, minutes: openM } = parseHm(hours.open);
-      const { hours: closeH, minutes: closeM } = parseHm(hours.close);
-
-      const dayOpen = new Date(cursor);
-      dayOpen.setHours(openH, openM, 0, 0);
-      const dayClose = new Date(cursor);
-      dayClose.setHours(closeH, closeM, 0, 0);
-
-      let slotStart = new Date(dayOpen);
-      while (slotStart.getTime() + durationMinutes * 60_000 <= dayClose.getTime()) {
-        const slotEnd = new Date(slotStart.getTime() + durationMinutes * 60_000);
-        if (slotStart >= rangeStart && slotStart <= rangeEnd && slotStart > now) {
-          slots.push({ start: new Date(slotStart), end: slotEnd });
+      const open = parseHm(hours.open);
+      const close = parseHm(hours.close);
+      const dayClose = wallTimeOnDate(dateKey, hours.close, timeZone);
+      if (dayClose && close.totalMinutes > open.totalMinutes) {
+        for (
+          let wallMinutes = open.totalMinutes;
+          wallMinutes + durationMinutes <= close.totalMinutes;
+          wallMinutes += durationMinutes
+        ) {
+          const date = parseLocalDateKey(dateKey);
+          const slotStart = localDateTimeToInstant(
+            { ...date, hour: Math.floor(wallMinutes / 60), minute: wallMinutes % 60 },
+            timeZone,
+          );
+          // Spring-gap wall times are null. Fall overlaps resolve to one
+          // canonical occurrence, preventing duplicate wall-clock capacity.
+          if (!slotStart) continue;
+          const slotEnd = new Date(slotStart.getTime() + durationMinutes * 60_000);
+          if (
+            slotEnd <= dayClose &&
+            slotStart >= rangeStart &&
+            slotStart <= rangeEnd &&
+            slotStart > now
+          ) slots.push({ start: slotStart, end: slotEnd });
         }
-        slotStart = new Date(slotStart.getTime() + durationMinutes * 60_000);
       }
     }
-    cursor.setDate(cursor.getDate() + 1);
-    cursor.setHours(0, 0, 0, 0);
+    dateKey = addLocalCalendarDays(dateKey, 1);
   }
-
   return slots;
 }
 
-/**
- * Filters candidate slots down to ones that don't overlap an existing
- * appointment for the given inspector (when one is specified) and that
- * don't push the day over `maxDailyInspections` company-wide capacity.
- */
 export function filterAvailableSlots(params: {
   candidates: TimeRange[];
   existingAppointments: TimeRange[];
   maxDailyInspections: number;
+  timeZone: string;
 }): TimeRange[] {
-  const { candidates, existingAppointments, maxDailyInspections } = params;
-
-  const countForDay = (day: Date) =>
-    existingAppointments.filter(
-      (a) =>
-        a.start.getFullYear() === day.getFullYear() &&
-        a.start.getMonth() === day.getMonth() &&
-        a.start.getDate() === day.getDate(),
-    ).length;
-
+  const { candidates, existingAppointments, maxDailyInspections, timeZone } = params;
+  const countForDay = (day: Date) => {
+    const key = localDateKey(day, timeZone);
+    return existingAppointments.filter((a) => localDateKey(a.start, timeZone) === key).length;
+  };
   return candidates.filter((slot) => {
-    const overlapsExisting = existingAppointments.some((a) => rangesOverlap(slot, a));
-    if (overlapsExisting) return false;
-    if (countForDay(slot.start) >= maxDailyInspections) return false;
-    return true;
+    if (existingAppointments.some((a) => rangesOverlap(slot, a))) return false;
+    return countForDay(slot.start) < maxDailyInspections;
   });
 }
 
@@ -123,77 +131,65 @@ export class CapacityExceededError extends Error {
   }
 }
 
-/**
- * Validates a requested booking against existing appointments before the
- * caller persists it. A partial unique DB index on
- * (companyId, scheduledStart) for active-status appointments is the final,
- * atomic guard against races (see prisma/schema.prisma's Appointment model
- * comment); this function is the primary, testable business-rule check —
- * and the only place that must reject a duration/slot-alignment that
- * doesn't match what the company actually offers.
- *
- * `requested.end` is trusted only to the extent that it must exactly equal
- * `requested.start + durationMinutes` — callers must derive it themselves
- * from the company's configured duration, never from client input, so a
- * caller can't submit a zero, negative, shortened, or lengthened
- * appointment. `requested.start` must also land exactly on the slot grid
- * `generateCandidateSlots` would produce (business-hours-open plus a whole
- * number of `durationMinutes` increments) — this rejects times a client
- * fabricates outside the actual bookable grid.
- */
+/** Validate a requested UTC instant against the company-local slot grid. */
 export function assertSlotBookable(params: {
   requested: TimeRange;
   existingAppointments: TimeRange[];
   businessHours: BusinessHours;
   maxDailyInspections: number;
   durationMinutes: number;
+  timeZone: string;
   now?: Date;
 }): void {
-  const { requested, existingAppointments, businessHours, maxDailyInspections, durationMinutes } =
-    params;
+  const {
+    requested,
+    existingAppointments,
+    businessHours,
+    maxDailyInspections,
+    durationMinutes,
+    timeZone,
+  } = params;
   const now = params.now ?? new Date();
 
-  if (requested.start <= now) {
-    throw new Error("Cannot book an appointment in the past.");
-  }
-
+  if (requested.start <= now) throw new Error("Cannot book an appointment in the past.");
   const durationMs = durationMinutes * 60_000;
-  const actualDurationMs = requested.end.getTime() - requested.start.getTime();
-  if (actualDurationMs !== durationMs) {
+  if (requested.end.getTime() - requested.start.getTime() !== durationMs) {
     throw new Error("Appointment duration does not match the configured inspection duration.");
   }
-
-  const hours = businessHours[requested.start.getDay()];
-  if (!hours) {
-    throw new Error("Selected day is outside business hours.");
+  if (!isCanonicalLocalInstant(requested.start, timeZone)) {
+    throw new Error("Selected time is invalid or ambiguous in the company timezone.");
   }
-  const { hours: openH, minutes: openM } = parseHm(hours.open);
-  const { hours: closeH, minutes: closeM } = parseHm(hours.close);
-  const dayOpen = new Date(requested.start);
-  dayOpen.setHours(openH, openM, 0, 0);
-  const dayClose = new Date(requested.start);
-  dayClose.setHours(closeH, closeM, 0, 0);
+
+  const dateKey = localDateKey(requested.start, timeZone);
+  const hours = businessHours[localWeekday(dateKey)];
+  if (!hours) throw new Error("Selected day is outside business hours.");
+  const dayOpen = wallTimeOnDate(dateKey, hours.open, timeZone);
+  const dayClose = wallTimeOnDate(dateKey, hours.close, timeZone);
+  if (!dayOpen || !dayClose) {
+    throw new Error("Business hours are invalid in the company timezone on this date.");
+  }
   if (requested.start < dayOpen || requested.end > dayClose) {
     throw new Error("Selected time is outside business hours.");
   }
 
-  const offsetMs = requested.start.getTime() - dayOpen.getTime();
-  if (offsetMs % durationMs !== 0) {
-    throw new Error("Selected time does not align to a valid inspection slot.");
-  }
+  const local = zonedDateTimeParts(requested.start, timeZone);
+  const open = parseHm(hours.open);
+  const localMinutes = local.hour * 60 + local.minute;
+  if (
+    local.second !== 0 ||
+    local.millisecond !== 0 ||
+    (localMinutes - open.totalMinutes) % durationMinutes !== 0
+  ) throw new Error("Selected time does not align to a valid inspection slot.");
 
-  const overlaps = existingAppointments.some((a) => rangesOverlap(requested, a));
-  if (overlaps) {
+  if (existingAppointments.some((a) => rangesOverlap(requested, a))) {
     throw new DoubleBookingError();
   }
-
   const sameDayCount = existingAppointments.filter(
-    (a) =>
-      a.start.getFullYear() === requested.start.getFullYear() &&
-      a.start.getMonth() === requested.start.getMonth() &&
-      a.start.getDate() === requested.start.getDate(),
+    (a) => localDateKey(a.start, timeZone) === dateKey,
   ).length;
-  if (sameDayCount >= maxDailyInspections) {
-    throw new CapacityExceededError();
-  }
+  if (sameDayCount >= maxDailyInspections) throw new CapacityExceededError();
+}
+
+export function appointmentCompanyDayRange(start: Date, timeZone: string) {
+  return companyDayRange(start, timeZone);
 }

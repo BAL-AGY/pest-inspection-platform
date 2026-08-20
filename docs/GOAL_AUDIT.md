@@ -237,7 +237,7 @@ IMPLEMENTED** · **BLOCKED BY EXTERNAL CREDENTIALS OR SERVICES**
 | Input validation | COMPLETE AND WORKING (qualification hardened Step 19) | Zod schemas on every mutating route plus centralized qualification question/type/option/ZIP/conditional/order validation. `/api/leads` is strict at the top level, so client `score`, `classification`, and `status` fields are rejected. | — | — | — |
 | Secrets | COMPLETE AND WORKING | `.env` gitignored (`.gitignore` confirmed: `.env`, `.env.*`, `!.env.example`), `.env.example` has placeholders only, `.env` itself has real local values not committed. New in Step 15: `FUNNEL_CAPABILITY_SECRET` (falls back to `AUTH_SECRET` if unset), documented in `.env.example`. | The independent Codex audit found `prisma/seed.ts` has a hardcoded default owner password (`"changeme123"`) with no `NODE_ENV`/production guard — running `npm run db:seed` against production without setting `SEED_OWNER_PASSWORD` creates/leaves a full-access owner account with a publicly known password. Confirmed by direct code inspection. Not fixed in this pass. | P1 before production seeding | Refuse to seed with the default password when `NODE_ENV === "production"` |
 | Rate limiting | IMPLEMENTED, SINGLE-PROCESS BACKEND (2026-08-21 Step 18) | Central `src/lib/rate-limit.ts` policies protect lead creation/continuation, tracking, availability, booking, and Auth.js POST actions. Identifiers are HMAC-hashed, forwarding headers are ignored unless trusted proxy hops are explicitly configured, and limited requests return 429 + Retry-After before mutation. `e2e/rate-limit.spec.ts` exercises real routes and DB non-mutation; the existing security/full-funnel suite still passes. | Current `InMemoryRateLimitStore` resets on restart and is not shared across replicas/serverless invocations. `/api/track` lead association also remains unverified even though flooding is bounded. | P1 before multi-instance production | Implement `RateLimitStore` with Redis/managed atomic counters or add an equivalent trusted edge/WAF control; configure and verify the host proxy chain |
-| Business-hours/timezone correctness | CONFIRMED GAP (found by the independent Codex audit, not fixed in this pass) | Direct code inspection confirmed `src/lib/scheduling.ts` and `src/lib/dashboard-metrics.ts` interpret business-hours boundaries and "today"/"this week" dashboard cutoffs using server-local time (`new Date().setHours(...)`), never `company.timezone` — that field is used only for *display* formatting. If the production host's timezone differs from a company's configured timezone (likely — the deployment target is a generic Node host, commonly UTC), slot availability and dashboard reporting windows will be wrong by the offset and shift across DST. | Same as evidence | P0 before non-UTC-server or multi-region production deployment | Use a timezone-aware library (`date-fns-tz`/`Temporal`) in both files to interpret boundaries in `company.timezone`, not server-local time |
+| Business-hours/timezone correctness | COMPLETE AND WORKING (Step 20) | Central `src/lib/timezone.ts` validates IANA zones and converts company-local calendar dates through `@date-fns/tz`. Scheduling, availability, booking/reschedule day queries, capacity, dashboard today/week, calendar grouping, and operational displays use `Company.timezone`. Unit tests cover UTC-host assumptions, 23/25-hour days, spring gaps, fall overlaps, UTC midnight, capacity, and reporting boundaries; live route coverage proves booking/reschedule rejection. | Overnight business-hour intervals (`close <= open`) remain unsupported by the current same-day hours model and fail closed. | P2 if overnight service is introduced | Add an explicit cross-day business-hours model before offering overnight inspections |
 | Webhook validation | NOT APPLICABLE YET | No webhook-receiving endpoints exist in the codebase (no payment/SMS-provider webhooks) | N/A until a live provider with webhooks (e.g. delivery-status callbacks) is integrated | P2 | Add signature verification when that integration happens |
 | Audit logging | PARTIALLY IMPLEMENTED | See Pipeline — real but inconsistent coverage | — | P1 | See Pipeline gap |
 
@@ -245,9 +245,9 @@ IMPLEMENTED** · **BLOCKED BY EXTERNAL CREDENTIALS OR SERVICES**
 
 | Requirement | Status | Evidence | Gap | Priority | Recommended next action |
 |---|---|---|---|---|---|
-| Unit tests | COMPLETE AND WORKING | **101/101 passing** after Step 19, including centralized qualification value, progression, conditional-branch, and booking-prerequisite tests | — | — | — |
+| Unit tests | COMPLETE AND WORKING | **111/111 passing** after Step 20, including company-timezone conversion, DST, local capacity, dashboard ranges, and calendar grouping | — | — | — |
 | Integration tests | PARTIALLY IMPLEMENTED | The e2e suite is the closest thing to integration coverage (hits real API routes + real DB); no narrower API-route-level integration tests | — | P2 | Optional — e2e coverage is currently strong |
-| End-to-end tests | COMPLETE AND WORKING | **24/24 passing** after Step 19. Four qualification-security scenarios exercise real routes/DB alongside the existing rate-limit, ownership, concurrency, suppression, communication, and full-funnel coverage. | No no-show/lost-outcome/second-company scenarios yet. Token expiry remains unit-tested rather than clock-faked through live HTTP. | P1 | Add scenarios for the remaining functional gaps when implemented |
+| End-to-end tests | COMPLETE AND WORKING | **25/25 passing** after Step 20. The timezone scenario exercises real availability, before/after-hours and closed-day booking, valid booking, and invalid reschedule while all prior security/concurrency/qualification/rate/suppression/communication/full-funnel scenarios remain green. | No no-show/lost-outcome/second-company scenarios yet. Token expiry remains unit-tested rather than clock-faked through live HTTP. | P1 | Add scenarios for the remaining functional gaps when implemented |
 | Production build | COMPLETE AND WORKING | **`next build` succeeded**, run fresh for this audit, all 19 routes compiled | — | — | — |
 | Type checking | COMPLETE AND WORKING | **`tsc --noEmit` — 0 errors**, run fresh for this audit | — | — | — |
 | Linting | COMPLETE AND WORKING | **`eslint` — 0 errors/warnings**, run fresh for this audit | — | — | — |
@@ -329,13 +329,11 @@ work today; items 7+ build toward a safe production launch.
    production, replace the current in-memory provider through the existing
    `RateLimitStore` boundary or deploy an equivalent trusted edge/WAF
    control. See `docs/ENDPOINT_SECURITY.md`.
-8. **Fix business-hours/timezone handling to use `company.timezone`, not
-   server-local time** — confirmed by the independent Codex audit and
-   direct code inspection of `src/lib/scheduling.ts` and
-   `src/lib/dashboard-metrics.ts`. Wrong slot availability and dashboard
-   reporting windows the moment the production host's timezone differs
-   from a company's configured timezone (likely on a generic Node host).
-   Not fixed in Step 15 (out of scope for its three named fixes).
+8. ~~**Fix business-hours/timezone handling to use `company.timezone`, not
+   server-local time.**~~ **DONE (Step 20).** Central IANA-zone helpers now
+   govern slots, validation, capacity, dashboard/calendar boundaries, and
+   operational display with explicit spring/fall DST behavior. See
+   `docs/TIMEZONE.md`.
 9. **Guard `prisma/seed.ts`'s default owner password against production
    use** — confirmed by the independent Codex audit: no `NODE_ENV` check,
    `SEED_OWNER_PASSWORD` unset falls back to a publicly known password.

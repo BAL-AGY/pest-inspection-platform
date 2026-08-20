@@ -2,20 +2,34 @@ import { describe, expect, it } from "vitest";
 import {
   DEFAULT_BUSINESS_HOURS,
   DoubleBookingError,
-  assertSlotBookable,
-  filterAvailableSlots,
-  generateCandidateSlots,
+  assertSlotBookable as assertSlotBookableInZone,
+  filterAvailableSlots as filterAvailableSlotsInZone,
+  generateCandidateSlots as generateCandidateSlotsInZone,
   rangesOverlap,
 } from "./scheduling";
+import { localDateTimeToInstant, zonedDateTimeParts } from "./timezone";
 
 // Anchor "now" to a fixed Monday so weekday math is deterministic.
-const NOW = new Date("2026-08-24T12:00:00"); // Monday
+const TEST_TIME_ZONE = "UTC";
+const NOW = new Date("2026-08-24T12:00:00Z"); // Monday
 const nextDay = (offset: number, hour: number, minute = 0) => {
   const d = new Date(NOW);
-  d.setDate(d.getDate() + offset);
-  d.setHours(hour, minute, 0, 0);
+  d.setUTCDate(d.getUTCDate() + offset);
+  d.setUTCHours(hour, minute, 0, 0);
   return d;
 };
+
+const generateCandidateSlots = (
+  params: Omit<Parameters<typeof generateCandidateSlotsInZone>[0], "timeZone">,
+) => generateCandidateSlotsInZone({ ...params, timeZone: TEST_TIME_ZONE });
+
+const filterAvailableSlots = (
+  params: Omit<Parameters<typeof filterAvailableSlotsInZone>[0], "timeZone">,
+) => filterAvailableSlotsInZone({ ...params, timeZone: TEST_TIME_ZONE });
+
+const assertSlotBookable = (
+  params: Omit<Parameters<typeof assertSlotBookableInZone>[0], "timeZone">,
+) => assertSlotBookableInZone({ ...params, timeZone: TEST_TIME_ZONE });
 
 describe("rangesOverlap", () => {
   it("detects overlapping ranges", () => {
@@ -51,7 +65,7 @@ describe("generateCandidateSlots", () => {
     expect(slots.length).toBeGreaterThan(0);
     for (const slot of slots) {
       expect(slot.start.getTime()).toBeGreaterThan(NOW.getTime());
-      const hours = DEFAULT_BUSINESS_HOURS[slot.start.getDay()];
+      const hours = DEFAULT_BUSINESS_HOURS[slot.start.getUTCDay()];
       expect(hours).not.toBeNull();
     }
   });
@@ -64,7 +78,7 @@ describe("generateCandidateSlots", () => {
       businessHours: DEFAULT_BUSINESS_HOURS,
       now: NOW,
     });
-    const sundaySlots = slots.filter((s) => s.start.getDay() === 0);
+    const sundaySlots = slots.filter((s) => s.start.getUTCDay() === 0);
     expect(sundaySlots.length).toBe(0);
   });
 });
@@ -241,5 +255,89 @@ describe("assertSlotBookable", () => {
         now: NOW,
       }),
     ).toThrow(/align/);
+  });
+});
+
+describe("company-timezone and DST scheduling", () => {
+  const CHICAGO = "America/Chicago";
+  const everyDay = Object.fromEntries(
+    Array.from({ length: 7 }, (_, day) => [day, { open: "01:00", close: "04:00" }]),
+  ) as typeof DEFAULT_BUSINESS_HOURS;
+
+  it("generates 9 AM Central as the correct UTC instant on a UTC server", () => {
+    const slots = generateCandidateSlotsInZone({
+      rangeStart: new Date("2026-08-24T00:00:00Z"),
+      rangeEnd: new Date("2026-08-25T00:00:00Z"),
+      durationMinutes: 60,
+      businessHours: { ...DEFAULT_BUSINESS_HOURS, 1: { open: "09:00", close: "11:00" } },
+      timeZone: CHICAGO,
+      now: new Date("2026-08-23T00:00:00Z"),
+    });
+    expect(slots.map((slot) => slot.start.toISOString())).toEqual([
+      "2026-08-24T14:00:00.000Z",
+      "2026-08-24T15:00:00.000Z",
+    ]);
+  });
+
+  it("never generates the nonexistent spring-forward hour", () => {
+    const slots = generateCandidateSlotsInZone({
+      rangeStart: new Date("2026-03-08T05:00:00Z"),
+      rangeEnd: new Date("2026-03-09T05:00:00Z"),
+      durationMinutes: 60,
+      businessHours: everyDay,
+      timeZone: CHICAGO,
+      now: new Date("2026-03-01T00:00:00Z"),
+    });
+    expect(slots.map((slot) => zonedDateTimeParts(slot.start, CHICAGO).hour)).toEqual([1, 3]);
+  });
+
+  it("generates only one canonical occurrence during fall-back", () => {
+    const slots = generateCandidateSlotsInZone({
+      rangeStart: new Date("2026-11-01T05:00:00Z"),
+      rangeEnd: new Date("2026-11-02T06:00:00Z"),
+      durationMinutes: 60,
+      businessHours: everyDay,
+      timeZone: CHICAGO,
+      now: new Date("2026-10-01T00:00:00Z"),
+    });
+    const oneAm = slots.filter((slot) => zonedDateTimeParts(slot.start, CHICAGO).hour === 1);
+    expect(oneAm).toHaveLength(1);
+    expect(oneAm[0].start.toISOString()).toBe("2026-11-01T06:00:00.000Z");
+
+    const secondOccurrence = new Date("2026-11-01T07:00:00Z");
+    expect(() =>
+      assertSlotBookableInZone({
+        requested: { start: secondOccurrence, end: new Date(secondOccurrence.getTime() + 60 * 60_000) },
+        existingAppointments: [],
+        businessHours: everyDay,
+        maxDailyInspections: 8,
+        durationMinutes: 60,
+        timeZone: CHICAGO,
+        now: new Date("2026-10-01T00:00:00Z"),
+      }),
+    ).toThrow(/ambiguous/);
+  });
+
+  it("counts capacity by Chicago date across UTC midnight", () => {
+    const requestedStart = localDateTimeToInstant(
+      { year: 2026, month: 8, day: 20, hour: 22, minute: 0 },
+      CHICAGO,
+    )!;
+    const eveningHours = Object.fromEntries(
+      Array.from({ length: 7 }, (_, day) => [day, { open: "18:00", close: "23:59" }]),
+    ) as typeof DEFAULT_BUSINESS_HOURS;
+    expect(() =>
+      assertSlotBookableInZone({
+        requested: { start: requestedStart, end: new Date(requestedStart.getTime() + 60 * 60_000) },
+        existingAppointments: [
+          { start: new Date("2026-08-21T00:30:00Z"), end: new Date("2026-08-21T01:30:00Z") },
+        ],
+        businessHours: eveningHours,
+        maxDailyInspections: 1,
+        durationMinutes: 60,
+        timeZone: CHICAGO,
+        now: new Date("2026-08-01T00:00:00Z"),
+      }),
+    ).toThrow(/capacity/);
   });
 });

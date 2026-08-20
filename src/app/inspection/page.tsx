@@ -39,6 +39,7 @@ export default function InspectionFunnelPage() {
   const [contact, setContact] = useState({ firstName: "", lastName: "", email: "", phone: "" });
   const [consent, setConsent] = useState({ sms: false, email: true });
   const [slots, setSlots] = useState<{ start: string; end: string }[]>([]);
+  const [companyTimeZone, setCompanyTimeZone] = useState<string | null>(null);
   const [slotsError, setSlotsError] = useState<string | null>(null);
   const [selectedSlot, setSelectedSlot] = useState<string | null>(null);
   const [bookingError, setBookingError] = useState<string | null>(null);
@@ -143,6 +144,7 @@ export default function InspectionFunnelPage() {
       return;
     }
     setSlots(data.slots);
+    setCompanyTimeZone(data.timeZone ?? null);
   }
 
   async function bookSlot() {
@@ -170,6 +172,7 @@ export default function InspectionFunnelPage() {
           day: "numeric",
           hour: "numeric",
           minute: "2-digit",
+          ...(companyTimeZone ? { timeZone: companyTimeZone, timeZoneName: "short" } : {}),
         }),
       );
       setStage("confirmed");
@@ -279,6 +282,7 @@ export default function InspectionFunnelPage() {
                     day: "numeric",
                     hour: "numeric",
                     minute: "2-digit",
+                    ...(companyTimeZone ? { timeZone: companyTimeZone, timeZoneName: "short" } : {}),
                   })}
                 </button>
               ))}

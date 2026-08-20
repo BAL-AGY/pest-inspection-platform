@@ -1,6 +1,7 @@
 import { prisma } from "./prisma";
 import { DEFAULT_SCORING_RULES, type ScoringRule } from "./scoring";
 import type { BusinessHours } from "./scheduling";
+import { assertValidIanaTimeZone } from "./timezone";
 
 /**
  * v1 serves a single pest control company. Every table is already
@@ -33,6 +34,10 @@ export function parseSupportedPests(company: { supportedPests: string }): string
 
 export function parseBusinessHours(company: { businessHours: string }): BusinessHours {
   return JSON.parse(company.businessHours);
+}
+
+export function parseCompanyTimeZone(company: { timezone: string }): string {
+  return assertValidIanaTimeZone(company.timezone);
 }
 
 export function parseScoringRules(company: { scoringRules: string }): ScoringRule[] {

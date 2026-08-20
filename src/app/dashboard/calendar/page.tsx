@@ -2,12 +2,8 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import { requireSession } from "@/lib/require-session";
 import { prisma } from "@/lib/prisma";
-
-function startOfDay(d: Date) {
-  const x = new Date(d);
-  x.setHours(0, 0, 0, 0);
-  return x;
-}
+import { parseCompanyTimeZone } from "@/lib/company";
+import { companyCalendarRange, formatInCompanyTime, localDateKey } from "@/lib/timezone";
 
 const RANGE_DAYS: Record<string, number> = { day: 1, week: 7, month: 30 };
 
@@ -21,8 +17,11 @@ export default async function CalendarPage({
   const { view = "week" } = await searchParams;
   const days = RANGE_DAYS[view] ?? 7;
 
-  const rangeStart = startOfDay(new Date());
-  const rangeEnd = new Date(rangeStart.getTime() + days * 24 * 60 * 60 * 1000);
+  const company = await prisma.company.findUnique({ where: { id: session.companyId } });
+  if (!company) redirect("/login");
+  const timeZone = parseCompanyTimeZone(company);
+  const todayKey = localDateKey(new Date(), timeZone);
+  const { start: rangeStart, end: rangeEnd } = companyCalendarRange(todayKey, days, timeZone);
 
   const appointments = await prisma.appointment.findMany({
     where: {
@@ -36,7 +35,7 @@ export default async function CalendarPage({
 
   const byDay = new Map<string, typeof appointments>();
   for (const a of appointments) {
-    const key = new Date(a.scheduledStart).toDateString();
+    const key = localDateKey(a.scheduledStart, timeZone);
     if (!byDay.has(key)) byDay.set(key, []);
     byDay.get(key)!.push(a);
   }
@@ -67,7 +66,14 @@ export default async function CalendarPage({
       <div className="flex flex-col gap-6">
         {Array.from(byDay.entries()).map(([day, dayAppointments]) => (
           <div key={day}>
-            <h2 className="text-sm font-semibold text-zinc-500 uppercase mb-2">{day}</h2>
+            <h2 className="text-sm font-semibold text-zinc-500 uppercase mb-2">
+              {formatInCompanyTime(dayAppointments[0].scheduledStart, timeZone, {
+                weekday: "short",
+                month: "short",
+                day: "numeric",
+                year: "numeric",
+              })}
+            </h2>
             <div className="flex flex-col gap-2">
               {dayAppointments.map((a) => (
                 <Link
@@ -77,9 +83,10 @@ export default async function CalendarPage({
                 >
                   <div>
                     <p className="font-medium">
-                      {new Date(a.scheduledStart).toLocaleTimeString("en-US", {
+                      {formatInCompanyTime(a.scheduledStart, timeZone, {
                         hour: "numeric",
                         minute: "2-digit",
+                        timeZoneName: "short",
                       })}
                       {" — "}
                       {a.lead.firstName || a.lead.lastName

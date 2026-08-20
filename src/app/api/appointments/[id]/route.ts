@@ -2,8 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { getActiveCompany, parseBusinessHours } from "@/lib/company";
-import { assertSlotBookable, CapacityExceededError, DoubleBookingError } from "@/lib/scheduling";
+import { parseBusinessHours, parseCompanyTimeZone } from "@/lib/company";
+import {
+  appointmentCompanyDayRange,
+  assertSlotBookable,
+  CapacityExceededError,
+  DoubleBookingError,
+} from "@/lib/scheduling";
 import { requireSession } from "@/lib/require-session";
 import { MESSAGE_TEMPLATES } from "@/lib/communications";
 import { sendIfAllowed } from "@/lib/suppression";
@@ -38,7 +43,9 @@ export async function PATCH(
   });
   if (!appointment) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  const company = await getActiveCompany();
+  const company = await prisma.company.findUnique({ where: { id: session.companyId } });
+  if (!company) return NextResponse.json({ error: "Company not found" }, { status: 500 });
+  const timeZone = parseCompanyTimeZone(company);
   const consent = {
     emailConsent: appointment.lead.emailConsent,
     smsConsent: appointment.lead.smsConsent,
@@ -52,7 +59,7 @@ export async function PATCH(
       day: "numeric",
       hour: "numeric",
       minute: "2-digit",
-      timeZone: company.timezone,
+      timeZone,
     });
 
   if (action === "reschedule") {
@@ -64,10 +71,7 @@ export async function PATCH(
     // configured duration — never trust a client-supplied end (same rule
     // as initial booking; see docs/GOAL_AUDIT.md).
     const requestedEnd = new Date(requestedStart.getTime() + company.inspectionDurationMinutes * 60_000);
-    const dayStart = new Date(requestedStart);
-    dayStart.setHours(0, 0, 0, 0);
-    const dayEnd = new Date(requestedStart);
-    dayEnd.setHours(23, 59, 59, 999);
+    const { start: dayStart, end: dayEnd } = appointmentCompanyDayRange(requestedStart, timeZone);
     const businessHours = parseBusinessHours(company);
 
     const loadDayAppointments = async (client: Prisma.TransactionClient | typeof prisma) => {
@@ -76,7 +80,7 @@ export async function PATCH(
           companyId: session.companyId,
           id: { not: id },
           status: { in: ["booked", "rescheduled"] },
-          scheduledStart: { gte: dayStart, lte: dayEnd },
+          scheduledStart: { gte: dayStart, lt: dayEnd },
         },
         select: { scheduledStart: true, scheduledEnd: true },
       });
@@ -90,6 +94,7 @@ export async function PATCH(
         businessHours,
         maxDailyInspections: company.maxDailyInspections,
         durationMinutes: company.inspectionDurationMinutes,
+        timeZone,
       });
     } catch (err) {
       if (err instanceof DoubleBookingError) {
@@ -118,6 +123,7 @@ export async function PATCH(
             businessHours,
             maxDailyInspections: company.maxDailyInspections,
             durationMinutes: company.inspectionDurationMinutes,
+            timeZone,
           });
           return tx.appointment.update({
             where: { id },
