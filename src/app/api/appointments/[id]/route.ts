@@ -5,6 +5,7 @@ import { getActiveCompany, parseBusinessHours } from "@/lib/company";
 import { assertSlotBookable, DoubleBookingError } from "@/lib/scheduling";
 import { requireSession } from "@/lib/require-session";
 import { MESSAGE_TEMPLATES, sendIfConsented } from "@/lib/communications";
+import { cancelAppointmentAndNotify } from "@/lib/appointment-actions";
 
 const patchSchema = z.object({
   action: z.enum(["reschedule", "cancel", "no_show", "complete"]),
@@ -115,34 +116,7 @@ export async function PATCH(
   }
 
   if (action === "cancel") {
-    const updated = await prisma.appointment.update({
-      where: { id },
-      data: { status: "cancelled", cancelledAt: new Date() },
-    });
-    const otherActive = await prisma.appointment.count({
-      where: {
-        leadId: appointment.leadId,
-        status: { in: ["booked", "rescheduled"] },
-        id: { not: id },
-      },
-    });
-    if (otherActive === 0) {
-      await prisma.lead.update({
-        where: { id: appointment.leadId },
-        data: { status: appointment.lead.classification === "sql" ? "sql" : appointment.lead.status },
-      });
-    }
-    if (appointment.lead.email) {
-      await sendIfConsented(
-        {
-          channel: "email",
-          to: appointment.lead.email,
-          subject: "Your inspection has been cancelled",
-          body: MESSAGE_TEMPLATES.cancelled({ name }),
-        },
-        consent,
-      );
-    }
+    const updated = await cancelAppointmentAndNotify(id, session.companyId);
     return NextResponse.json({ appointment: updated });
   }
 

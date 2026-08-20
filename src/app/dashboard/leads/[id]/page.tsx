@@ -3,6 +3,7 @@ import { revalidatePath } from "next/cache";
 import { requireSession } from "@/lib/require-session";
 import { prisma } from "@/lib/prisma";
 import { LEAD_STATUSES } from "@/lib/pipeline";
+import { cancelAppointmentAndNotify } from "@/lib/appointment-actions";
 
 export default async function LeadDetailPage({
   params,
@@ -107,10 +108,7 @@ export default async function LeadDetailPage({
   async function cancelAppointment(formData: FormData) {
     "use server";
     const appointmentId = String(formData.get("appointmentId"));
-    await prisma.appointment.update({
-      where: { id: appointmentId },
-      data: { status: "cancelled", cancelledAt: new Date() },
-    });
+    await cancelAppointmentAndNotify(appointmentId, session!.companyId);
     revalidatePath(`/dashboard/leads/${id}`);
   }
 
