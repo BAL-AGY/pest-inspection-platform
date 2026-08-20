@@ -150,9 +150,7 @@ states): `docs/STATES.md`.
 (`send(message)`) with a swappable singleton (`getProvider`/`setProvider`)
 and a console-logging dev implementation as the only one wired up today —
 no live vendor is configured or assumed. `canSend()`/`sendIfConsented()`
-remain the pure, per-lead consent/opt-out gate. **Gap**: sends are not
-persisted anywhere (no `Communication` row) — see `docs/DATA_MODEL.md` for
-the recommended fix before a live provider is wired in.
+remain the pure, per-lead consent/opt-out gate.
 
 `src/lib/suppression.ts` (added 2026-08-20, Step 9) sits in front of that
 gate as the actual call-site entry point: `sendIfAllowed()` checks the
@@ -180,6 +178,30 @@ notices, is gated identically — so suppression blocks all of them
 uniformly, matching pre-existing `canSend` behavior. A transactional-bypass
 would be a real product decision, not a data-model gap, and wasn't asked
 for.
+
+**Communication delivery log (added 2026-08-20, Step 11)**:
+`sendIfAllowed()` now also persists one `Communication` row per send
+attempt via `src/lib/communication-log.ts`'s `logCommunication()` — the
+gap flagged directly above and in `docs/GOAL_AUDIT.md` Critical Path item
+4. Precision matters here: `status: "sent"` means the provider *accepted*
+the message, not that it reached the homeowner. `status: "blocked"` covers
+both suppression and missing/absent consent (`blockedReason` records
+which); `status: "failed"` covers both a thrown provider exception and a
+provider that resolves `{ sent: false }` without throwing. `"queued"` (for
+a future async/queued provider) and `"delivered"`/`"bounced"`/
+`"undeliverable"` (for a future delivery-status webhook) are declared in
+`COMMUNICATION_STATUSES` (`src/lib/pipeline.ts`) but never written today —
+see CLAUDE.md's "never fabricate third-party integration data." Logging
+lives entirely inside `sendIfAllowed`, so booking, reschedule, and
+cancellation call sites needed no independent logging logic of their own —
+they only had to start passing `leadId`/`appointmentId`/`type` through the
+existing call. A logging write failure is caught and reported to console
+rather than propagated, so a logging outage can never block a real send
+attempt. Tenant/lead scoping matches every other table (`companyId`/
+`leadId` on every row, asserted directly in
+`src/lib/suppression.test.ts`). Queryable today via `GET /api/leads/[id]`
+(`lead.communications`); no CRM UI renders it yet — out of scope for this
+fix.
 
 ### Attribution architecture
 
@@ -245,6 +267,7 @@ src/
     visitor.ts                 Client-side visitor/lead id + track() helper
     communications.ts          Provider abstraction, consent gate, templates
     suppression.ts                Durable cross-lead suppression + shared send gate
+    communication-log.ts           Persists a Communication row per send attempt
     analytics.ts                 Pure funnel/cost/CAC/ROAS calculations
     dashboard-metrics.ts          Prisma-backed aggregation using analytics.ts
     *.test.ts                     Vitest unit tests, one per lib module above
@@ -255,6 +278,9 @@ e2e/
                            completion → won → dashboard
   suppression.spec.ts    Playwright: opt-out persists across a brand new
                            Lead/visitorId, unrelated contact unaffected
+  communication-log.spec.ts  Playwright: booking/reschedule/cancel each
+                           persist a communication record; a suppressed
+                           contact's send is persisted as blocked
 
 docs/
   ARCHITECTURE.md   This file — stack + system architecture decision record
@@ -297,6 +323,12 @@ place this schema simplifies a maximal entity list into fewer tables:
   absent (dashboard shows "no data yet," not invented figures).
 - `AuditLog` — records important state changes (status transitions,
   scoring-rule changes, user actions).
+- `SuppressionEntry` — durable, company-scoped opt-out list keyed by
+  normalized email/phone, independent of any one Lead row.
+- `Communication` — one row per outbound send attempt (email/sms
+  confirmation, reschedule, cancellation), recording whether it was
+  blocked, sent (provider-accepted), or failed — never fabricated as
+  "delivered."
 
 ## Qualification, scoring, and scheduling as pure logic
 
@@ -317,10 +349,10 @@ priority:
    company-scoped `SuppressionEntry` table, checked by the shared send gate
    and by lead creation — see the Messaging provider abstraction section
    above and `docs/DATA_MODEL.md` **SuppressionEntry**.
-2. **No Communication log.** Sends go through a real, consent-gated
-   provider abstraction but are never persisted — no queryable record of
-   what was actually sent. Should exist before a live provider is wired
-   up. → `docs/DATA_MODEL.md` **Communication**.
+2. ~~**No Communication log.**~~ **Fixed 2026-08-20 (Step 11).** Every
+   send attempt through the shared gate now persists a `Communication`
+   row — see the Messaging provider abstraction section above and
+   `docs/DATA_MODEL.md` **Communication**.
 3. **Three appointment-lifecycle events are missing from the funnel log**
    (reschedule, cancel, no-show) — `Appointment.status` itself is correct,
    but these transitions are invisible to funnel/attribution analytics.

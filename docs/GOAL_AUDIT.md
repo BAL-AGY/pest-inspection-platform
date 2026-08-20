@@ -193,7 +193,7 @@ IMPLEMENTED** · **BLOCKED BY EXTERNAL CREDENTIALS OR SERVICES**
 | Consent handling | COMPLETE AND WORKING | `canSend()` gates every send on `emailConsent`/`smsConsent`/`optedOutAt`, unit-tested | — | — | — |
 | Suppression/opt-out handling | COMPLETE AND WORKING (fixed 2026-08-20 — Step 9) | Durable, company-scoped `SuppressionEntry` table keyed by normalized email/phone (`src/lib/suppression.ts`), checked by the shared send gate (`sendIfAllowed`, used by every send call site) *before* per-lead consent, and by lead creation/contact capture (`POST /api/leads`) so a suppressed contact can't reactivate `smsConsent`/`emailConsent` under a new `Lead`/`visitorId`. CRM opt-out (`PATCH /api/leads/[id]` `{ optedOut: true }`) now persists into `SuppressionEntry`. Verified live: `e2e/suppression.spec.ts` — opt-out persists, a brand-new Lead with the same email/phone stays suppressed even while re-requesting consent, an unrelated contact is unaffected. Unit-tested: normalization, tenant-scoping, the shared-gate rejection path (`src/lib/suppression.test.ts`, 15 tests). | No suppression-management UI (opt-out is still only reachable via direct API call — there was no UI for it before this change either, so this is not a regression) and no un-suppress/re-consent flow. No distinction between marketing and transactional sends — the current system has none (every send, including booking confirmations, is gated identically), so suppression blocks all of them uniformly; this matches pre-existing `canSend` behavior and was deliberately not changed as part of this fix — see "Known gaps" below. | — | Add a suppression-management UI and a deliberate un-suppress flow when the CRM needs one; revisit the marketing/transactional distinction only if the business asks for transactional sends to bypass suppression |
 | Live email/SMS provider | BLOCKED BY EXTERNAL CREDENTIALS OR SERVICES | `src/lib/communications.ts` only has a console-logging dev provider | No vendor chosen/contracted (deliberately, per `docs/ARCHITECTURE.md`) | P0 before real leads are contacted | Choose a vendor (e.g. an ESP + Twilio-compatible SMS API), obtain credentials, implement `CommunicationProvider` |
-| Communication delivery log | NOT IMPLEMENTED | No `Communication` table; sends aren't persisted (`docs/DATA_MODEL.md`) | No queryable record of what was actually sent | P1, must precede live provider | Add the table before wiring a live provider |
+| Communication delivery log | COMPLETE AND WORKING (fixed 2026-08-20 — Step 11) | `Communication` table, written exclusively from the shared send gate (`sendIfAllowed()` in `src/lib/suppression.ts` → `src/lib/communication-log.ts`), covering booking confirmation, reschedule, and cancellation sends. Records company/lead/appointment, channel, message type, attempted-at, and a precise status (`blocked`/`sent`/`failed`, with `blockedReason`/`failureReason`/`providerMessageId` as applicable) — `sent` means the provider accepted the message, never that it was delivered. Verified live: `e2e/communication-log.spec.ts` — booking/reschedule/cancel each persist a `sent` record tied to the right lead/appointment, and a suppressed contact's confirmation persists as `blocked`. Unit-tested: all three blocked/sent/failed paths and correct company/lead scoping (`src/lib/suppression.test.ts`). Queryable via `GET /api/leads/[id]` (`lead.communications`). | No CRM UI renders the log yet (out of scope for this fix — the requirement was persistence and shared-gate enforcement, not a UI). `queued`/`delivered`/`bounced`/`undeliverable` statuses are declared for a future async/webhook-driven provider but nothing writes them yet — correct, since no such provider exists. | — | Render `lead.communications` on the CRM lead-detail page once there's an owner-facing need for it; wire `delivered`/`bounced`/`undeliverable` when a live provider with delivery webhooks is chosen |
 
 ### Authentication / security
 
@@ -213,9 +213,9 @@ IMPLEMENTED** · **BLOCKED BY EXTERNAL CREDENTIALS OR SERVICES**
 
 | Requirement | Status | Evidence | Gap | Priority | Recommended next action |
 |---|---|---|---|---|---|
-| Unit tests | COMPLETE AND WORKING | **51/51 passing**, run fresh for this audit | — | — | — |
+| Unit tests | COMPLETE AND WORKING | **51/51 passing** as of the original audit; **70/70 passing** as of 2026-08-20 Step 11 (suppression + communication-log coverage added) | — | — | — |
 | Integration tests | PARTIALLY IMPLEMENTED | The e2e suite is the closest thing to integration coverage (hits real API routes + real DB); no narrower API-route-level integration tests | — | P2 | Optional — e2e coverage is currently strong |
-| End-to-end tests | COMPLETE AND WORKING | **1/1 passing, run live for this audit**, covers the entire required journey | Only one scenario (happy path + one conflict check) — no reschedule/no-show/lost-outcome/second-company scenarios | P1 | Add scenarios for the gaps found above once they're fixed |
+| End-to-end tests | COMPLETE AND WORKING | **1/1 passing** as of the original audit; **4/4 passing** as of 2026-08-20 Step 11 (`full-funnel.spec.ts`, `suppression.spec.ts`, `communication-log.spec.ts` × 2 scenarios), run live and re-run twice to confirm repeatability against the persistent dev DB | Only the happy path + one conflict check on the main journey — no no-show/lost-outcome/second-company scenarios yet. Also: Step 11 fixed a pre-existing repeatability bug in `suppression.spec.ts` (hardcoded, non-stamped phone numbers meant the durable suppression it wrote on the first run would fail the test on every subsequent run against the same dev DB — now stamped like the email already was) | P1 | Add scenarios for the gaps found above once they're fixed |
 | Production build | COMPLETE AND WORKING | **`next build` succeeded**, run fresh for this audit, all 19 routes compiled | — | — | — |
 | Type checking | COMPLETE AND WORKING | **`tsc --noEmit` — 0 errors**, run fresh for this audit | — | — | — |
 | Linting | COMPLETE AND WORKING | **`eslint` — 0 errors/warnings**, run fresh for this audit | — | — | — |
@@ -244,9 +244,13 @@ toward a safe production launch.
    Communications table above and `TASKS.md` for full detail. Behaviorally
    verified against the real dev DB (`e2e/suppression.spec.ts`) and via the
    full test/lint/typecheck/build/e2e suite, all passing.
-4. **Add a `Communication` delivery log** (Communications). Needed for the
-   same reason — operational visibility and recordkeeping before a live
-   provider goes live.
+4. ~~**Add a `Communication` delivery log**~~ **DONE (2026-08-20, Step
+   11).** Every send attempt through the shared gate (`sendIfAllowed()`)
+   now persists a `Communication` row (blocked/sent/failed, with
+   provider-acceptance vs. delivery kept precise — see the Communications
+   table above and `TASKS.md` for full detail). Behaviorally verified
+   against the real dev DB (`e2e/communication-log.spec.ts`) and via the
+   full test/lint/typecheck/build/e2e suite, all passing.
 5. **Add basic rate limiting to public endpoints** (`/api/leads`,
    `/api/track`, `/api/appointments` POST) before the site takes real
    public traffic.

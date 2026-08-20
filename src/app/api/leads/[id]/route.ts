@@ -19,6 +19,7 @@ export async function GET(
       appointments: { orderBy: { scheduledStart: "desc" } },
       funnelEvents: { orderBy: { createdAt: "asc" } },
       notes: { orderBy: { createdAt: "desc" } },
+      communications: { orderBy: { attemptedAt: "desc" } },
     },
   });
   if (!lead) return NextResponse.json({ error: "Not found" }, { status: 404 });

@@ -54,6 +54,9 @@ export async function cancelAppointmentAndNotify(appointmentId: string, companyI
       },
       {
         companyId,
+        leadId: appointment.leadId,
+        appointmentId: appointment.id,
+        type: "appointment_cancelled",
         consent: {
           emailConsent: appointment.lead.emailConsent,
           smsConsent: appointment.lead.smsConsent,

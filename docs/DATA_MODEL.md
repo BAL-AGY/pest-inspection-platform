@@ -159,18 +159,35 @@ applied uniformly across the whole company, not per inspector
 real `AvailabilityRule` entity (per-inspector hours, capacity, days off)
 is the natural next step when a second inspector is added.
 
-### Communication — not persisted at all
-This is the most significant gap found in this review. `src/lib/
-communications.ts` implements a real, consent-gated send path
-(`sendIfConsented`) with a swappable provider, but **no row is ever
-written to the database recording that a message was sent, to whom, when,
-or via which channel.** The dev provider only `console.log`s. There is no
-way today to query "was the confirmation actually sent for appointment
-X" from stored data — only from process logs. **This should be a
-`Communication` table (`leadId`, `appointmentId?`, `channel`, `template`,
-`status`, `sentAt`) before a live provider is wired up**, both for
-operational visibility and because a delivery record is generally expected
-for TCPA/CAN-SPAM recordkeeping.
+### Communication — implemented 2026-08-20 (Step 11)
+`Communication(companyId, leadId, appointmentId?, channel, type, status,
+blockedReason?, failureReason?, to, subject?, providerMessageId?,
+attemptedAt, updatedAt)`. `channel` is `"email"`/`"sms"`; `type` is one of
+`COMMUNICATION_TYPES` (`src/lib/pipeline.ts`) — `appointment_confirmation`,
+`appointment_rescheduled`, `appointment_cancelled`,
+`appointment_reminder`, `qualified_not_booked_follow_up`. `status` is one
+of `COMMUNICATION_STATUSES` — today only `blocked`/`sent`/`failed` are
+ever written; `queued` exists for a future async/queued provider and
+`delivered`/`bounced`/`undeliverable` exist for a future delivery-status
+webhook, none of which this codebase writes yet (see
+`src/lib/communication-log.ts`).
+
+One row is written per send **attempt**, not per successful delivery —
+`status: "sent"` means the provider *accepted* the message, never that the
+homeowner received it (see `docs/ARCHITECTURE.md` Messaging provider
+abstraction for the attempted/accepted/delivered distinction this was
+built to be precise about). Written exclusively from `sendIfAllowed()`
+(`src/lib/suppression.ts`), the same shared gate that already enforces
+suppression and consent, so no call site can independently duplicate or
+skip logging — every appointment confirmation, reschedule, and
+cancellation send goes through it. A logging failure is caught and
+reported to console rather than propagated, so a logging outage can never
+block a real booking/reschedule/cancellation.
+
+Queryable per-lead via `GET /api/leads/[id]` (`lead.communications`,
+alongside the existing `appointments`/`funnelEvents`/`notes` includes) —
+no dedicated UI was built for it (out of scope for this fix; the CRM
+lead-detail page doesn't render it yet).
 
 ### Consent — fields on Lead, not a history table
 `smsConsent`/`emailConsent`/`optedOutAt` hold *current* state only, no
@@ -269,10 +286,14 @@ Company 1─* Appointment
 Company 1─* MarketingSpend
 Company 1─* AuditLog
 Company 1─* SuppressionEntry
+Company 1─* Communication
 
 Lead 1─* LeadNote
 Lead 1─* Appointment
 Lead 1─* FunnelEvent  (leadId nullable pre-identification)
+Lead 1─* Communication
+
+Appointment 1─* Communication  (appointmentId nullable — not every send is appointment-scoped)
 
 Inspector 1─* Appointment  (inspectorId nullable — no inspector assigned yet)
 
@@ -298,7 +319,7 @@ User 1─* AuditLog  (userId nullable — system-driven changes)
 | Appointment | `Appointment` |
 | Inspector | `Inspector` |
 | AvailabilityRule | `Company` scalar fields, company-wide not per-inspector |
-| Communication | **not implemented — see gap above** |
+| Communication | `Communication` — implemented 2026-08-20, see above |
 | Consent | `Lead` consent fields, current-state only |
 | SuppressionEntry | `SuppressionEntry` — implemented 2026-08-20, see above |
 | PipelineEvent | `AuditLog` + `FunnelEvent`, inconsistent coverage |

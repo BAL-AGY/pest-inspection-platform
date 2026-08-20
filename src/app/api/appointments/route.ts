@@ -135,7 +135,13 @@ export async function POST(req: NextRequest) {
         subject: "Your free home pest inspection is confirmed",
         body: MESSAGE_TEMPLATES.appointmentConfirmation({ name, when }),
       },
-      { companyId: company.id, consent },
+      {
+        companyId: company.id,
+        leadId: lead.id,
+        appointmentId: appointment.id,
+        type: "appointment_confirmation",
+        consent,
+      },
     );
   }
   if (lead.phone) {
@@ -145,7 +151,13 @@ export async function POST(req: NextRequest) {
         to: lead.phone,
         body: MESSAGE_TEMPLATES.appointmentConfirmation({ name, when }),
       },
-      { companyId: company.id, consent },
+      {
+        companyId: company.id,
+        leadId: lead.id,
+        appointmentId: appointment.id,
+        type: "appointment_confirmation",
+        consent,
+      },
     );
   }
 

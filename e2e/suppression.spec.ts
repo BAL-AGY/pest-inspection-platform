@@ -38,7 +38,11 @@ async function createLead(
 test("opted-out contact stays suppressed across a brand new lead/session", async ({ page }) => {
   const stamp = Date.now();
   const email = `suppress.${stamp}@example.com`;
-  const phone = "+15125550171";
+  // Suppression is durable by design, so a hardcoded phone number would
+  // stay suppressed forever after the first run against the persistent dev
+  // DB (see e2e/full-funnel.spec.ts's note on being safely re-runnable) —
+  // stamp it unique per run, like the email above.
+  const phone = `+1512555${String(stamp).slice(-4)}`;
 
   // 1-2. First session: a real contact gives consent and becomes a Lead.
   const first = await createLead(page, `e2e-suppress-first-${stamp}`, {
@@ -85,7 +89,7 @@ test("opted-out contact stays suppressed across a brand new lead/session", async
     firstName: "Jamie",
     lastName: "Neverout",
     email: `unrelated.${stamp}@example.com`,
-    phone: "+15125550172",
+    phone: `+1512555${String(stamp + 1).slice(-4)}`,
   });
   expect(unrelated.lead.emailConsent).toBe(true);
   expect(unrelated.lead.smsConsent).toBe(true);

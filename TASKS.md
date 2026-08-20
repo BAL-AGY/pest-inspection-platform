@@ -45,8 +45,9 @@ before this audit.
 - [x] Local dev database (SQLite) migrated and seeded (`npm run db:seed`)
 - [x] Data model documented entity-by-entity with simplification rationale
       — `docs/DATA_MODEL.md`
-- [ ] **(gap, prior)** `Communication` table (delivery log — currently sends
-      are not persisted anywhere)
+- [x] **(fixed 2026-08-20 — Step 11)** `Communication` table (delivery log —
+      one row per send attempt, blocked/sent/failed) — `prisma/schema.prisma`,
+      migration `20260820205053_add_communication_log`
 - [x] **(fixed 2026-08-20 — Step 9)** `SuppressionEntry` table (company-scoped
       opt-out list keyed by normalized email/phone, independent of any one
       Lead row) — `prisma/schema.prisma`, migration
@@ -202,8 +203,21 @@ before this audit.
 - [x] Confirmation, reminder, reschedule, cancellation, and follow-up
       message templates
 - [x] Dev provider (console log) — real send path, no live vendor wired up
-- [ ] **(gap, prior)** `Communication` delivery log (see Database, milestone
-      2) — should exist before a live provider is wired up
+- [x] **(fixed 2026-08-20 — Step 11)** `Communication` delivery log (see
+      Database, milestone 2) — `src/lib/communication-log.ts`'s
+      `logCommunication()`, written exclusively from the shared send gate
+      (`sendIfAllowed()` in `src/lib/suppression.ts`), so booking
+      confirmation, reschedule, and cancellation sends all log without any
+      call site duplicating the logic. One row per send *attempt*: status
+      is `blocked` (suppressed or missing/absent consent, with
+      `blockedReason`), `sent` (provider accepted — not proof of delivery),
+      or `failed` (provider threw or declined, with `failureReason`).
+      `queued`/`delivered`/`bounced`/`undeliverable` are declared in
+      `COMMUNICATION_TYPES`/`COMMUNICATION_STATUSES` (`src/lib/pipeline.ts`)
+      for a future async/webhook-driven provider but nothing writes them
+      yet. Queryable via `GET /api/leads/[id]` (`lead.communications`); no
+      CRM UI renders it (out of scope for this fix). See
+      `docs/GOAL_AUDIT.md` for full detail.
 - [x] **(fixed 2026-08-20 — Step 9)** Durable, cross-lead/cross-session
       suppression — `src/lib/suppression.ts`. A contact who opts out is
       recorded in `SuppressionEntry` (normalized email/phone, company-scoped)
@@ -245,8 +259,9 @@ before this audit.
 
 - [x] Unit tests: scoring, qualification/service-area,
       scheduling/double-booking, attribution, analytics, communications
-      consent gating, suppression normalization/tenant-scoping/shared-gate
-      (66 tests, `npm run test` — re-verified passing 2026-08-20)
+      consent gating, suppression normalization/tenant-scoping/shared-gate,
+      communication delivery logging (blocked/sent/failed, tenant+lead
+      scoping) (70 tests, `npm run test` — re-verified passing 2026-08-20)
 - [x] End-to-end test of the full required journey — traffic → landing →
       funnel → lead → scoring → MQL/SQL → availability → booking →
       double-booking prevention → CRM/pipeline → inspection completed →
@@ -256,7 +271,18 @@ before this audit.
       (`e2e/suppression.spec.ts`): opt-out persists, a brand new Lead under a
       new visitorId with the same email/phone stays suppressed and cannot
       reactivate consent, an unrelated contact is unaffected — run live
-      against the real dev DB, passing
+      against the real dev DB, passing. (Fixed a pre-existing repeatability
+      bug in this spec during Step 11: hardcoded, non-stamped phone numbers
+      meant the durable suppression written on the first run would fail the
+      test on every subsequent run against the same persistent dev DB — now
+      stamped like the email already was.)
+- [x] **(added 2026-08-20 — Step 11)** End-to-end tests of communication
+      delivery logging (`e2e/communication-log.spec.ts`): booking
+      confirmation, reschedule, and cancellation each persist a `sent`
+      `Communication` record tied to the correct lead/appointment; a
+      suppressed contact's booking confirmation persists as `blocked` —
+      run live against the real dev DB, passing (re-run twice to confirm
+      repeatability)
 - [x] Type checking (`npx tsc --noEmit` — 0 errors, 2026-08-20)
 - [x] Linting (`npm run lint` — 0 errors, 2026-08-20)
 - [ ] Authorization/tenant-isolation tests (only one company exists

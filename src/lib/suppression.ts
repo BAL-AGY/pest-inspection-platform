@@ -8,20 +8,24 @@
  * `SuppressionEntry` is keyed by (companyId, channel, normalized identifier)
  * and is checked independently of any single Lead's consent fields.
  * `sendIfAllowed` is the shared gate: it wraps `communications.canSend`
- * (per-lead consent/opt-out) with a suppression-table check and is what
- * every send call site should use instead of calling
+ * (per-lead consent/opt-out) with a suppression-table check and persists
+ * an operational delivery record via `communication-log.ts` for every
+ * attempt. It is what every send call site should use instead of calling
  * `communications.sendIfConsented` directly, so a new call site can't
- * accidentally bypass suppression.
+ * accidentally bypass suppression or delivery logging.
  */
 
 import { prisma } from "./prisma";
 import {
+  canSend,
   sendIfConsented,
   type ConsentState,
   type MessageChannel,
   type OutboundMessage,
   type SendResult,
 } from "./communications";
+import { logCommunication } from "./communication-log";
+import type { CommunicationType } from "./pipeline";
 
 /**
  * Normalizes an email for comparison: trims whitespace and lowercases.
@@ -149,8 +153,14 @@ export async function recordSuppression(params: {
 /**
  * The shared send gate. Checks the durable suppression table *before*
  * falling through to `communications.canSend`'s per-lead consent/opt-out
- * check. Every outbound send call site should use this instead of calling
- * `sendIfConsented` directly.
+ * check, then persists an operational record of what happened via
+ * `logCommunication` (src/lib/communication-log.ts) — every outbound send
+ * call site should use this instead of calling `sendIfConsented` directly,
+ * so suppression and delivery logging can never be bypassed by a new call
+ * site duplicating the logic itself.
+ *
+ * `sent: true` means the provider *accepted* the message, not that the
+ * homeowner received it — see communication-log.ts.
  *
  * Note: like the existing `canSend`, this does not distinguish marketing
  * from transactional/operational messages — the current system has no such
@@ -161,8 +171,24 @@ export async function recordSuppression(params: {
  */
 export async function sendIfAllowed(
   message: OutboundMessage,
-  params: { companyId: string; consent: ConsentState },
+  params: {
+    companyId: string;
+    leadId: string;
+    appointmentId?: string | null;
+    type: CommunicationType;
+    consent: ConsentState;
+  },
 ): Promise<SendResult> {
+  const logBase = {
+    companyId: params.companyId,
+    leadId: params.leadId,
+    appointmentId: params.appointmentId,
+    channel: message.channel,
+    type: params.type,
+    to: message.to,
+    subject: message.subject,
+  };
+
   const suppressed = await isSuppressed({
     companyId: params.companyId,
     channel: message.channel,
@@ -170,7 +196,33 @@ export async function sendIfAllowed(
     phone: message.channel === "sms" ? message.to : undefined,
   });
   if (suppressed) {
+    await logCommunication({ ...logBase, status: "blocked", blockedReason: "recipient is suppressed" });
     return { sent: false, reason: "recipient is suppressed" };
   }
-  return sendIfConsented(message, params.consent);
+
+  const gate = canSend(message.channel, params.consent);
+  if (!gate.sent) {
+    await logCommunication({ ...logBase, status: "blocked", blockedReason: gate.reason });
+    return gate;
+  }
+
+  try {
+    // Gate already confirmed above; sendIfConsented re-checks it (cheap,
+    // pure) and invokes the provider.
+    const result = await sendIfConsented(message, params.consent);
+    await logCommunication({
+      ...logBase,
+      status: result.sent ? "sent" : "failed",
+      failureReason: result.sent ? null : (result.reason ?? "Provider declined to send"),
+      providerMessageId: result.providerMessageId,
+    });
+    return result;
+  } catch (err) {
+    await logCommunication({
+      ...logBase,
+      status: "failed",
+      failureReason: err instanceof Error ? err.message : "Unknown provider error",
+    });
+    return { sent: false, reason: "provider error" };
+  }
 }

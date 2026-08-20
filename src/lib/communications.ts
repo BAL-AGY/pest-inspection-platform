@@ -28,6 +28,12 @@ export interface ConsentState {
 export interface SendResult {
   sent: boolean;
   reason?: string;
+  /**
+   * Set by a real provider once it accepts a message, to correlate a
+   * later delivery-status webhook. The dev provider never sets this — it
+   * has nothing real to report — see src/lib/communication-log.ts.
+   */
+  providerMessageId?: string;
 }
 
 export function canSend(channel: MessageChannel, consent: ConsentState): SendResult {

@@ -6,6 +6,9 @@ vi.mock("./prisma", () => ({
       count: vi.fn(),
       upsert: vi.fn(),
     },
+    communication: {
+      create: vi.fn(),
+    },
   },
 }));
 
@@ -22,6 +25,7 @@ import { setProvider } from "./communications";
 
 const count = prisma.suppressionEntry.count as unknown as ReturnType<typeof vi.fn>;
 const upsert = prisma.suppressionEntry.upsert as unknown as ReturnType<typeof vi.fn>;
+const communicationCreate = prisma.communication.create as unknown as ReturnType<typeof vi.fn>;
 
 describe("normalizeEmail", () => {
   it("trims and lowercases for comparison", () => {
@@ -154,46 +158,152 @@ describe("recordSuppression", () => {
 describe("sendIfAllowed — the shared communication gate", () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it("rejects a suppressed contact without ever invoking the provider", async () => {
+  const baseParams = {
+    companyId: "company-a",
+    leadId: "lead-1",
+    appointmentId: "appt-1",
+    type: "appointment_confirmation" as const,
+  };
+
+  it("rejects a suppressed contact without ever invoking the provider, and persists a BLOCKED record", async () => {
     count.mockResolvedValue(1);
     const send = vi.fn().mockResolvedValue({ sent: true });
     setProvider({ send });
 
     const result = await sendIfAllowed(
       { channel: "email", to: "jordan@example.com", body: "hi" },
-      { companyId: "company-a", consent: { emailConsent: true, smsConsent: true, optedOutAt: null } },
+      { ...baseParams, consent: { emailConsent: true, smsConsent: true, optedOutAt: null } },
     );
 
     expect(result.sent).toBe(false);
     expect(result.reason).toMatch(/suppress/);
     expect(send).not.toHaveBeenCalled();
+
+    expect(communicationCreate).toHaveBeenCalledTimes(1);
+    expect(communicationCreate.mock.calls[0][0].data).toMatchObject({
+      companyId: "company-a",
+      leadId: "lead-1",
+      appointmentId: "appt-1",
+      channel: "email",
+      type: "appointment_confirmation",
+      to: "jordan@example.com",
+      status: "blocked",
+      blockedReason: expect.stringMatching(/suppress/),
+    });
   });
 
-  it("allows a non-suppressed, consented contact through to the provider", async () => {
-    count.mockResolvedValue(0);
-    const send = vi.fn().mockResolvedValue({ sent: true });
-    setProvider({ send });
-
-    const result = await sendIfAllowed(
-      { channel: "sms", to: "5125550100", body: "hi" },
-      { companyId: "company-a", consent: { emailConsent: false, smsConsent: true, optedOutAt: null } },
-    );
-
-    expect(result.sent).toBe(true);
-    expect(send).toHaveBeenCalledTimes(1);
-  });
-
-  it("still enforces per-lead consent even when not suppressed", async () => {
+  it("allows a non-suppressed, consented email contact through to the provider and records SENT", async () => {
     count.mockResolvedValue(0);
     const send = vi.fn().mockResolvedValue({ sent: true });
     setProvider({ send });
 
     const result = await sendIfAllowed(
       { channel: "email", to: "jordan@example.com", body: "hi" },
-      { companyId: "company-a", consent: { emailConsent: false, smsConsent: false, optedOutAt: null } },
+      { ...baseParams, consent: { emailConsent: true, smsConsent: false, optedOutAt: null } },
+    );
+
+    expect(result.sent).toBe(true);
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(communicationCreate.mock.calls[0][0].data).toMatchObject({
+      companyId: "company-a",
+      leadId: "lead-1",
+      channel: "email",
+      status: "sent",
+    });
+  });
+
+  it("allows a non-suppressed, consented SMS contact through to the provider and records SENT", async () => {
+    count.mockResolvedValue(0);
+    const send = vi.fn().mockResolvedValue({ sent: true });
+    setProvider({ send });
+
+    const result = await sendIfAllowed(
+      { channel: "sms", to: "5125550100", body: "hi" },
+      { ...baseParams, consent: { emailConsent: false, smsConsent: true, optedOutAt: null } },
+    );
+
+    expect(result.sent).toBe(true);
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(communicationCreate.mock.calls[0][0].data).toMatchObject({
+      channel: "sms",
+      to: "5125550100",
+      status: "sent",
+    });
+  });
+
+  it("still enforces per-lead consent even when not suppressed, and persists a BLOCKED record with the consent reason", async () => {
+    count.mockResolvedValue(0);
+    const send = vi.fn().mockResolvedValue({ sent: true });
+    setProvider({ send });
+
+    const result = await sendIfAllowed(
+      { channel: "email", to: "jordan@example.com", body: "hi" },
+      { ...baseParams, consent: { emailConsent: false, smsConsent: false, optedOutAt: null } },
     );
 
     expect(result.sent).toBe(false);
     expect(send).not.toHaveBeenCalled();
+    expect(communicationCreate.mock.calls[0][0].data).toMatchObject({
+      status: "blocked",
+      blockedReason: expect.stringMatching(/consent/),
+    });
+  });
+
+  it("records a FAILED communication when the provider throws", async () => {
+    count.mockResolvedValue(0);
+    const send = vi.fn().mockRejectedValue(new Error("network timeout"));
+    setProvider({ send });
+
+    const result = await sendIfAllowed(
+      { channel: "email", to: "jordan@example.com", body: "hi" },
+      { ...baseParams, consent: { emailConsent: true, smsConsent: false, optedOutAt: null } },
+    );
+
+    expect(result.sent).toBe(false);
+    expect(communicationCreate.mock.calls[0][0].data).toMatchObject({
+      status: "failed",
+      failureReason: "network timeout",
+    });
+  });
+
+  it("records a FAILED communication when the provider resolves sent:false without throwing", async () => {
+    count.mockResolvedValue(0);
+    const send = vi.fn().mockResolvedValue({ sent: false, reason: "invalid phone number" });
+    setProvider({ send });
+
+    const result = await sendIfAllowed(
+      { channel: "sms", to: "5125550100", body: "hi" },
+      { ...baseParams, consent: { emailConsent: false, smsConsent: true, optedOutAt: null } },
+    );
+
+    expect(result.sent).toBe(false);
+    expect(communicationCreate.mock.calls[0][0].data).toMatchObject({
+      status: "failed",
+      failureReason: "invalid phone number",
+    });
+  });
+
+  it("scopes each communication record to the correct company and lead", async () => {
+    count.mockResolvedValue(0);
+    const send = vi.fn().mockResolvedValue({ sent: true });
+    setProvider({ send });
+
+    await sendIfAllowed(
+      { channel: "email", to: "jordan@example.com", body: "hi" },
+      {
+        companyId: "company-b",
+        leadId: "lead-42",
+        appointmentId: "appt-42",
+        type: "appointment_rescheduled",
+        consent: { emailConsent: true, smsConsent: false, optedOutAt: null },
+      },
+    );
+
+    expect(communicationCreate.mock.calls[0][0].data).toMatchObject({
+      companyId: "company-b",
+      leadId: "lead-42",
+      appointmentId: "appt-42",
+      type: "appointment_rescheduled",
+    });
   });
 });

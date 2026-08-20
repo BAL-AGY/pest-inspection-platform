@@ -110,7 +110,13 @@ export async function PATCH(
           subject: "Your inspection has been rescheduled",
           body: MESSAGE_TEMPLATES.rescheduled({ name, when: fmt(requestedStart) }),
         },
-        { companyId: session.companyId, consent },
+        {
+          companyId: session.companyId,
+          leadId: appointment.leadId,
+          appointmentId: appointment.id,
+          type: "appointment_rescheduled",
+          consent,
+        },
       );
     }
     return NextResponse.json({ appointment: updated });

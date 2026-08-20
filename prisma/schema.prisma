@@ -49,6 +49,7 @@ model Company {
   marketingSpend     MarketingSpend[]
   auditLogs          AuditLog[]
   suppressionEntries SuppressionEntry[]
+  communications     Communication[]
 }
 
 // ---------------------------------------------------------------------------
@@ -149,9 +150,10 @@ model Lead {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  appointments Appointment[]
-  funnelEvents FunnelEvent[]
-  notes        LeadNote[]
+  appointments   Appointment[]
+  funnelEvents   FunnelEvent[]
+  notes          LeadNote[]
+  communications Communication[]
 
   @@index([companyId, status])
   @@index([visitorId])
@@ -226,6 +228,8 @@ model Appointment {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  communications Communication[]
+
   @@unique([inspectorId, scheduledStart])
   @@index([companyId, scheduledStart])
   @@index([inspectorId, scheduledStart])
@@ -273,6 +277,45 @@ model SuppressionEntry {
 
   @@unique([companyId, channel, identifierType, identifierValue])
   @@index([companyId, identifierType, identifierValue])
+}
+
+// ---------------------------------------------------------------------------
+// Communication delivery log (operational record of every send attempt)
+// ---------------------------------------------------------------------------
+
+model Communication {
+  id        String  @id @default(cuid())
+  companyId String
+  company   Company @relation(fields: [companyId], references: [id])
+
+  leadId String
+  lead   Lead   @relation(fields: [leadId], references: [id])
+
+  appointmentId String?
+  appointment   Appointment? @relation(fields: [appointmentId], references: [id])
+
+  channel String // "email" | "sms"
+  type    String // see src/lib/pipeline.ts COMMUNICATION_TYPES
+
+  status String // see src/lib/pipeline.ts COMMUNICATION_STATUSES
+  // "blocked" | "queued" | "sent" | "failed" | "delivered" | "bounced" |
+  // "undeliverable" — only blocked/queued/sent/failed are ever written
+  // today; the delivery-confirmed statuses are declared for a future
+  // provider-webhook integration and must never be written without one.
+
+  blockedReason String? // set when status = "blocked" — why sendIfAllowed refused (suppressed / no consent / opted out)
+  failureReason String? // set when status = "failed" — provider-reported error/rejection
+
+  to                String // destination address/number targeted for this attempt
+  subject           String? // email only
+  providerMessageId String? // set once a live provider accepts the send; correlates future delivery-status webhooks. Unset while only the dev provider is wired up.
+
+  attemptedAt DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([companyId, leadId])
+  @@index([companyId, status])
+  @@index([appointmentId])
 }
 
 // ---------------------------------------------------------------------------

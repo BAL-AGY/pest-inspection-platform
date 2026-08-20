@@ -42,6 +42,33 @@ export const FUNNEL_EVENT_TYPES = [
 ] as const;
 export type FunnelEventType = (typeof FUNNEL_EVENT_TYPES)[number];
 
+export const COMMUNICATION_TYPES = [
+  "appointment_confirmation",
+  "appointment_rescheduled",
+  "appointment_cancelled",
+  "appointment_reminder",
+  "qualified_not_booked_follow_up",
+] as const;
+export type CommunicationType = (typeof COMMUNICATION_TYPES)[number];
+
+// "blocked"/"queued"/"sent"/"failed" are the only statuses this codebase
+// ever writes today (no live provider is wired up — see
+// docs/ARCHITECTURE.md). "delivered"/"bounced"/"undeliverable" are declared
+// so a future webhook-driven provider integration has a status to update
+// into without a schema change; nothing may write them until a real
+// provider delivery-status webhook exists (see CLAUDE.md: never fabricate
+// third-party integration data).
+export const COMMUNICATION_STATUSES = [
+  "blocked",
+  "queued",
+  "sent",
+  "failed",
+  "delivered",
+  "bounced",
+  "undeliverable",
+] as const;
+export type CommunicationStatus = (typeof COMMUNICATION_STATUSES)[number];
+
 export const SWITCH_REASONS = [
   "pest_returned_after_treatment",
   "poor_service",
