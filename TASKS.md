@@ -61,12 +61,17 @@ before this audit.
 - [x] JWT session carrying `companyId` and `role`
 - [ ] **(gap, prior)** Role-based authorization — `role` (`owner`/`staff`) is
       carried but does not currently gate any route or UI differently
-- [ ] **(gap, audit)** No rate limiting on public unauthenticated endpoints
-      (`/api/leads` POST, `/api/track`, `/api/appointments` POST) — no
-      `middleware.ts` exists. Needed before real public traffic. Raised in
-      priority by the 2026-08-21 Step 15 Codex audit: with IDOR closed, a
-      scripted flood of legitimate-shaped requests is the next-highest
-      abuse vector.
+- [x] **(implemented 2026-08-21 — Step 18)** Central public-API rate
+      limiting (`src/lib/rate-limit.ts`) with per-action policies for lead
+      creation/continuation, tracking, availability, booking, and Auth.js
+      POST actions; privacy-hashed identifiers; explicit trusted-proxy
+      configuration; `429` + `Retry-After`; and a swappable
+      `RateLimitStore`. Real-route tests prove normal requests succeed,
+      excess writes are limited, identifiers stay isolated, and limited
+      requests add no DB rows. **Production scaling limitation:** the
+      current in-memory store is single-process only; deploy a shared
+      Redis/managed provider or trusted edge/WAF control before
+      multi-instance traffic. See `docs/ENDPOINT_SECURITY.md`.
 - [ ] **(gap, audit)** Tenant/company isolation is architecturally correct
       by code inspection (every query scoped by `session.companyId`) but
       only one `Company` exists, so it has never been exercised by a test
@@ -374,7 +379,8 @@ before this audit.
       logging (blocked/sent/failed, tenant+lead scoping), funnel-ownership
       capability tokens (issuance/verification, production-secret
       fail-closed behavior, TTL/expiry, future-dated-token rejection),
-      production-startup env validation (93 tests, `npm run test` —
+      production-startup env validation, and centralized rate-policy/store/
+      proxy-trust behavior (97 tests, `npm run test` —
       re-verified passing 2026-08-21)
 - [x] End-to-end test of the full required journey — traffic → landing →
       funnel → lead → scoring → MQL/SQL → availability → booking →
@@ -399,6 +405,13 @@ before this audit.
       DB, re-run to confirm repeatability. Both the Step 15 and Step 17
       ownership fixes were sanity-checked by temporarily reverting each,
       confirming its test genuinely fails, then reverting the revert.
+- [x] **(added 2026-08-21 — Step 18)** Real-route rate-limit coverage
+      (`e2e/rate-limit.spec.ts`, 3 scenarios): normal lead/tracking/booking
+      requests succeed; excessive traffic returns 429 + Retry-After;
+      identifiers are isolated; and limited requests create no additional
+      Lead, FunnelEvent, or Appointment row. Full Playwright suite is now
+      20/20 passing, including ownership, atomic booking, suppression,
+      communication logging, and the full homeowner journey.
 - [x] **(added 2026-08-20 — Step 9)** End-to-end test of durable suppression
       (`e2e/suppression.spec.ts`): opt-out persists, a brand new Lead under a
       new visitorId with the same email/phone stays suppressed and cannot

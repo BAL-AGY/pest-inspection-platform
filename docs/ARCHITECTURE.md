@@ -108,6 +108,28 @@ No GraphQL, no tRPC — deliberately, to keep the request/response shape
 directly inspectable and avoid a second schema layer for a backend this
 size. Every input is validated with Zod before touching Prisma.
 
+### Public API abuse protection
+
+Public route handlers use the centralized limiter in
+`src/lib/rate-limit.ts`; the complete endpoint inventory and policies are
+in `docs/ENDPOINT_SECURITY.md`. Enforcement stays in route handlers rather
+than Next.js Proxy because lead/booking policies need parsed,
+capability-verified identifiers, and Proxy code must not rely on shared
+globals. Policies differ for lead creation, continuation, tracking,
+availability, booking, and authentication.
+
+Identifiers are HMAC-hashed before storage. `X-Forwarded-For` is ignored
+unless the operator explicitly configures the verified trusted-proxy hop
+count. Limited requests receive `429` plus `Retry-After` before any
+state-changing database operation. Booking transactions and the active-slot
+unique index remain authoritative; throttling is only an abuse-control layer.
+
+The current `InMemoryRateLimitStore` is a local/single-process provider and
+is **not sufficient for multi-instance production**. `RateLimitStore` is the
+seam for Redis or a managed atomic counter; a shared store or equivalent
+verified edge/WAF control remains required before horizontally scaled public
+traffic.
+
 ### Server/client boundaries
 
 Public funnel pages and dashboard read views are server components/route
@@ -635,13 +657,12 @@ priority:
     named fixes) — needs a timezone-aware library
     (`date-fns-tz`/`Temporal`) in both files before real multi-region or
     non-UTC-server deployment.
-14. **No rate limiting on public endpoints** (`POST /api/leads`,
-    `POST /api/track`, `POST /api/appointments`) — still true; no
-    `middleware.ts` exists. Combined with items 10–11 now fixed, the
-    highest-value abuse vector remaining is a scripted flood of
-    legitimate-shaped qualification answers creating real bookings/
-    consuming real capacity, not IDOR or double-booking. See
-    `docs/GOAL_AUDIT.md` Critical Path.
+14. ~~**No rate limiting on public endpoints.**~~ **Implemented 2026-08-21
+    (Step 18)** with centralized per-action policies, privacy-hashed
+    identifiers, explicit trusted-proxy handling, and 429/Retry-After.
+    Remaining limitation: the current provider is in-memory; replace it
+    through `RateLimitStore` with a shared backend or verified edge/WAF
+    control before multi-instance traffic. See `docs/ENDPOINT_SECURITY.md`.
 15. **Seed script has a hardcoded default owner password
     (`"changeme123"`)** with no `NODE_ENV`/production guard
     (`prisma/seed.ts`) — confirmed by direct inspection. Running

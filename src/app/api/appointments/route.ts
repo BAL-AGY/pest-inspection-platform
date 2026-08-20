@@ -9,6 +9,7 @@ import { requireSession } from "@/lib/require-session";
 import { MESSAGE_TEMPLATES } from "@/lib/communications";
 import { sendIfAllowed } from "@/lib/suppression";
 import { verifyLeadToken } from "@/lib/funnel-capability";
+import { enforceRateLimit, rateLimitResponse, trustedClientAddress } from "@/lib/rate-limit";
 
 const bookSchema = z.object({
   leadId: z.string().min(1),
@@ -41,6 +42,16 @@ export async function POST(req: NextRequest) {
     token: leadToken,
   });
   if (!owns) return NextResponse.json({ error: "forbidden" }, { status: 403 });
+
+  const limit = await enforceRateLimit({
+    policy: "booking",
+    companyScope: company.slug,
+    identifiers: [
+      { kind: "lead", value: lead.id },
+      { kind: "network", value: trustedClientAddress(req) },
+    ],
+  });
+  if (!limit.allowed) return rateLimitResponse(limit);
 
   const serviceZipCodes = parseServiceZipCodes(company);
   const inArea = isInServiceArea(lead.zipCode ?? undefined, serviceZipCodes);

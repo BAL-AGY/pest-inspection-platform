@@ -4,6 +4,7 @@ import { getActiveCompany, parseBusinessHours, parseServiceZipCodes } from "@/li
 import { generateCandidateSlots, filterAvailableSlots } from "@/lib/scheduling";
 import { isInServiceArea } from "@/lib/qualification";
 import { verifyLeadToken } from "@/lib/funnel-capability";
+import { enforceRateLimit, rateLimitResponse, trustedClientAddress } from "@/lib/rate-limit";
 
 export async function GET(req: NextRequest) {
   const leadId = req.nextUrl.searchParams.get("leadId");
@@ -28,6 +29,16 @@ export async function GET(req: NextRequest) {
     token: leadToken,
   });
   if (!owns) return NextResponse.json({ error: "forbidden" }, { status: 403 });
+
+  const limit = await enforceRateLimit({
+    policy: "availability",
+    companyScope: company.slug,
+    identifiers: [
+      { kind: "lead", value: lead.id },
+      { kind: "network", value: trustedClientAddress(req) },
+    ],
+  });
+  if (!limit.allowed) return rateLimitResponse(limit);
 
   const serviceZipCodes = parseServiceZipCodes(company);
   const inArea = isInServiceArea(lead.zipCode ?? undefined, serviceZipCodes);

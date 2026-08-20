@@ -7,6 +7,12 @@ import { isInServiceArea, getNextQuestion } from "@/lib/qualification";
 import { requireSession } from "@/lib/require-session";
 import { suppressedChannels } from "@/lib/suppression";
 import { issueLeadToken, verifyLeadToken } from "@/lib/funnel-capability";
+import {
+  enforceRateLimit,
+  publicCompanyRateLimitScope,
+  rateLimitResponse,
+  trustedClientAddress,
+} from "@/lib/rate-limit";
 
 const contactSchema = z.object({
   firstName: z.string().min(1).optional(),
@@ -63,6 +69,19 @@ export async function POST(req: NextRequest) {
   const { visitorId, leadId, leadToken, answers, contact, attribution, smsConsent, emailConsent } =
     parsed.data;
 
+  const network = trustedClientAddress(req);
+  if (!leadId) {
+    const limit = await enforceRateLimit({
+      policy: "leadCreate",
+      companyScope: publicCompanyRateLimitScope(),
+      identifiers: [
+        { kind: "visitor", value: visitorId },
+        { kind: "network", value: network },
+      ],
+    });
+    if (!limit.allowed) return rateLimitResponse(limit);
+  }
+
   const company = await getActiveCompany();
   const serviceZipCodes = parseServiceZipCodes(company);
   const scoringRules = parseScoringRules(company);
@@ -87,6 +106,15 @@ export async function POST(req: NextRequest) {
     if (!owns) {
       return NextResponse.json({ error: "forbidden" }, { status: 403 });
     }
+    const limit = await enforceRateLimit({
+      policy: "leadContinue",
+      companyScope: company.slug,
+      identifiers: [
+        { kind: "lead", value: candidate.id },
+        { kind: "network", value: network },
+      ],
+    });
+    if (!limit.allowed) return rateLimitResponse(limit);
     existing = candidate;
   } else {
     // No leadId supplied: this is always treated as a request to create a
