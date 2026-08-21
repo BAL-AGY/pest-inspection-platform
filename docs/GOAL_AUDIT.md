@@ -381,6 +381,11 @@ work today; items 7+ build toward a safe production launch.
     release/migration, backup, monitoring, staging and rollback design are now
     implemented/documented. No external resource or provider-specific manifest
     exists yet. See `docs/DEPLOYMENT.md` and `docs/OPERATIONS.md`.
+    Repository staging preparation is complete: `docs/STAGING.md` defines the
+    environment and smoke checks, `docs/STAGING_DEMO.md` defines the client
+    walkthrough, simulated communications are staging-only/no-network, and
+    demo provisioning/reseed commands are explicitly guarded. No Render
+    resource has been created or contacted.
 18. **SEO/AEO polish, CTA/step-level event instrumentation, dashboard
     source-breakdown UI, mobile device verification** — lower-priority
     polish items that don't block the core journey or compliance posture.

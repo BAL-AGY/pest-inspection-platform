@@ -19,7 +19,9 @@
     "db:deploy": "prisma migrate deploy",
     "db:status": "prisma migrate status",
     "db:generate": "prisma generate",
-    "db:seed": "tsx prisma/seed.ts"
+    "db:seed": "tsx prisma/seed.ts",
+    "db:staging:demo": "tsx prisma/staging-demo.ts seed",
+    "db:staging:reseed": "tsx prisma/staging-demo.ts reset"
   },
   "dependencies": {
     "@date-fns/tz": "^1.5.0",

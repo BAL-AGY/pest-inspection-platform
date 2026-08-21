@@ -1,5 +1,7 @@
-import { describe, expect, it } from "vitest";
-import { canSend, DeterministicCommunicationProvider } from "./communications";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { canSend, DeterministicCommunicationProvider, getProvider } from "./communications";
+
+afterEach(() => vi.unstubAllEnvs());
 
 describe("canSend", () => {
   it("blocks any send once opted out, regardless of consent flags", () => {
@@ -59,5 +61,15 @@ describe("canSend", () => {
     });
     expect(result.accepted).toBe(true);
     expect(result.providerMessageId).toMatch(/^det_/);
+  });
+
+  it("uses the no-network adapter only in explicit staging and never production", () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("COMMUNICATION_PROVIDER", "deterministic");
+    vi.stubEnv("DEPLOYMENT_ENV", "production");
+    expect(getProvider().name).toBe("disabled");
+
+    vi.stubEnv("DEPLOYMENT_ENV", "staging");
+    expect(getProvider().name).toBe("deterministic");
   });
 });

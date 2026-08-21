@@ -83,7 +83,42 @@ describe("production environment validation", () => {
     const simulated = strongEnvironment();
     simulated.COMMUNICATION_PROVIDER = "deterministic";
     expect(validateProductionEnvironment(simulated)).toContain(
-      "COMMUNICATION_PROVIDER is not supported by this build",
+      "Production requires COMMUNICATION_PROVIDER=disabled until a live adapter is implemented",
+    );
+  });
+
+  it("allows only the no-network deterministic adapter in explicit staging", () => {
+    const staging = strongEnvironment();
+    staging.DEPLOYMENT_ENV = "staging";
+    staging.COMMUNICATION_PROVIDER = "deterministic";
+    staging.COMMUNICATION_TEST_WEBHOOK_SECRET = "webhook_5Nv2Pq8Lc3Rx7Md1Ta9Ks4Yh6Wz0BjEe";
+    expect(validateProductionEnvironment(staging)).toEqual([]);
+
+    staging.COMMUNICATION_PROVIDER = "disabled";
+    expect(validateProductionEnvironment(staging)).toContain(
+      "Staging requires COMMUNICATION_PROVIDER=deterministic",
+    );
+  });
+
+  it("requires a strong deterministic webhook secret in staging", () => {
+    const staging = strongEnvironment();
+    staging.DEPLOYMENT_ENV = "staging";
+    staging.COMMUNICATION_PROVIDER = "deterministic";
+    expect(validateProductionEnvironment(staging).join(" ")).toContain(
+      "COMMUNICATION_TEST_WEBHOOK_SECRET",
+    );
+
+    staging.COMMUNICATION_TEST_WEBHOOK_SECRET = staging.AUTH_SECRET;
+    expect(validateProductionEnvironment(staging).join(" ")).toContain(
+      "COMMUNICATION_TEST_WEBHOOK_SECRET and AUTH_SECRET must be independent",
+    );
+  });
+
+  it("rejects non-deployment NODE environments in a production runtime", () => {
+    const env = strongEnvironment();
+    env.DEPLOYMENT_ENV = "development";
+    expect(validateProductionEnvironment(env)).toContain(
+      "DEPLOYMENT_ENV must be staging or production when NODE_ENV is production",
     );
   });
 

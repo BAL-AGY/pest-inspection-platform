@@ -4,6 +4,7 @@ import { z } from "zod";
 import { prisma } from "./prisma";
 import { normalizeEmail, normalizePhone } from "./suppression";
 import type { MessageChannel } from "./communications";
+import { isStagingEnvironment } from "./environment";
 
 const MAX_WEBHOOK_AGE_SECONDS = 5 * 60;
 const STOP_WORDS = new Set(["STOP", "STOPALL", "UNSUBSCRIBE", "CANCEL", "END", "QUIT"]);
@@ -74,7 +75,14 @@ export function getCommunicationWebhookAdapter(name: string): CommunicationWebho
   const overridden = adapterOverrides.get(name);
   if (overridden) return overridden;
   const secret = process.env.COMMUNICATION_TEST_WEBHOOK_SECRET;
-  if (name === "deterministic" && process.env.NODE_ENV !== "production" && secret) {
+  if (
+    name === "deterministic" &&
+    (
+      process.env.NODE_ENV !== "production" ||
+      (isStagingEnvironment() && process.env.COMMUNICATION_PROVIDER === "deterministic")
+    ) &&
+    secret
+  ) {
     return new DeterministicWebhookAdapter(secret);
   }
   return null;

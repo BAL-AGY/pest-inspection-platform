@@ -353,7 +353,7 @@ test("active-slot constraints and capacity are isolated by company", async () =>
     Date.UTC(
       future.getUTCFullYear() + 10,
       future.getUTCMonth(),
-      future.getUTCDate(),
+      future.getUTCDate() + (stamp % 3_650),
     ) +
       (stamp % (30 * 60 * 1000)),
   );

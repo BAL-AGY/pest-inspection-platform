@@ -8,10 +8,13 @@ or email vendor is connected, and no real message is sent by this repository.
 `CommunicationProvider` owns outbound acceptance; `CommunicationWebhookAdapter`
 owns provider-specific signature verification and payload normalization. Route
 and business code use only normalized messages/events. The deterministic
-adapter performs no network I/O, does not log recipient/message content, and is
-available only outside production. Production currently accepts only
-`COMMUNICATION_PROVIDER=disabled`, so a deployment cannot silently treat the
-test adapter as real delivery.
+adapter performs no network I/O and does not log recipient or message content.
+It is available outside production and in the explicit
+`DEPLOYMENT_ENV=staging` boundary, where production-strength validation requires
+`COMMUNICATION_PROVIDER=deterministic` plus a staging-only webhook secret. True
+production accepts only `COMMUNICATION_PROVIDER=disabled`, so staging
+simulation cannot silently become real delivery. Staging UI is visibly labeled
+`MESSAGES SIMULATED`.
 
 `CommunicationProviderAccount` maps a provider-owned account/sender to exactly
 one Company. It stores routing identifiers, never API credentials. Provider

@@ -1,6 +1,6 @@
 import bcrypt from "bcryptjs";
 import { describe, expect, it } from "vitest";
-import { resolveSeedOwnerConfig } from "./seed-config";
+import { assertStagingDemoCommand, resolveSeedOwnerConfig } from "./seed-config";
 
 describe("owner seed configuration", () => {
   it("refuses production owner provisioning without explicit credentials", () => {
@@ -45,11 +45,50 @@ describe("owner seed configuration", () => {
     });
   });
 
+  it("requires an explicit staging tenant confirmation", () => {
+    const stagingPassword = "s".repeat(40);
+    expect(() =>
+      resolveSeedOwnerConfig({
+        NODE_ENV: "production",
+        DEPLOYMENT_ENV: "staging",
+        SEED_OWNER_EMAIL: "owner@staging.invalid",
+        SEED_OWNER_PASSWORD: stagingPassword,
+      }),
+    ).toThrow(/STAGING_DEMO_CONFIRM/);
+
+    expect(
+      resolveSeedOwnerConfig({
+        NODE_ENV: "production",
+        DEPLOYMENT_ENV: "staging",
+        STAGING_DEMO_CONFIRM: "demo-pest-control",
+        SEED_OWNER_EMAIL: "owner@staging.invalid",
+        SEED_OWNER_PASSWORD: stagingPassword,
+      }),
+    ).toEqual({
+      email: "owner@staging.invalid",
+      password: stagingPassword,
+    });
+  });
+
   it("keeps deterministic development/test seed credentials available", () => {
     expect(resolveSeedOwnerConfig({ NODE_ENV: "test" })).toEqual({
       email: "owner@example.com",
       password: "changeme123",
     });
+  });
+
+  it("prevents staging reset/seed commands outside the confirmed demo tenant", () => {
+    expect(() => assertStagingDemoCommand({ NODE_ENV: "production", DEPLOYMENT_ENV: "production" })).toThrow(
+      /DEPLOYMENT_ENV=staging/,
+    );
+    expect(() => assertStagingDemoCommand({ NODE_ENV: "production", DEPLOYMENT_ENV: "staging" })).toThrow(
+      /STAGING_DEMO_CONFIRM/,
+    );
+    expect(() => assertStagingDemoCommand({
+      NODE_ENV: "production",
+      DEPLOYMENT_ENV: "staging",
+      STAGING_DEMO_CONFIRM: "demo-pest-control",
+    })).not.toThrow();
   });
 
   it("bcrypt hashing verifies the credential without storing plaintext", async () => {

@@ -1,4 +1,5 @@
 import crypto from "crypto";
+import { isStagingEnvironment } from "./environment";
 
 export type MessageChannel = "email" | "sms";
 export type CommunicationPurpose = "transactional" | "marketing";
@@ -86,7 +87,11 @@ let providerOverride: CommunicationProvider | null = null;
 
 export function getProvider(): CommunicationProvider {
   if (providerOverride) return providerOverride;
-  return process.env.COMMUNICATION_PROVIDER === "deterministic" || process.env.NODE_ENV !== "production"
+  const configured = process.env.COMMUNICATION_PROVIDER;
+  const deterministic = process.env.NODE_ENV !== "production"
+    ? configured !== "disabled"
+    : isStagingEnvironment() && configured === "deterministic";
+  return deterministic
     ? new DeterministicCommunicationProvider()
     : new DisabledProvider();
 }

@@ -1,5 +1,21 @@
 const MIN_SECRET_LENGTH = 32;
 
+export type DeploymentEnvironment = "development" | "staging" | "production" | "test";
+
+export function deploymentEnvironment(env: NodeJS.ProcessEnv = process.env): DeploymentEnvironment {
+  const configured = env.DEPLOYMENT_ENV?.trim();
+  if (configured === "development" || configured === "staging" || configured === "production" || configured === "test") {
+    return configured;
+  }
+  if (env.NODE_ENV === "production") return "production";
+  if (env.NODE_ENV === "test") return "test";
+  return "development";
+}
+
+export function isStagingEnvironment(env: NodeJS.ProcessEnv = process.env): boolean {
+  return deploymentEnvironment(env) === "staging";
+}
+
 const KNOWN_WEAK_SECRET_VALUES = new Set([
   "changeme",
   "changeme123",
@@ -57,6 +73,12 @@ export function validateProductionEnvironment(
     return error ? [error] : [];
   });
 
+  const configuredDeploymentEnvironment = env.DEPLOYMENT_ENV?.trim();
+  if (configuredDeploymentEnvironment && !["staging", "production"].includes(configuredDeploymentEnvironment)) {
+    errors.push("DEPLOYMENT_ENV must be staging or production when NODE_ENV is production");
+  }
+  const deployment = deploymentEnvironment(env);
+
   const databaseUrl = env.DATABASE_URL?.trim();
   if (!databaseUrl) {
     errors.push("DATABASE_URL is required in production");
@@ -88,8 +110,24 @@ export function validateProductionEnvironment(
   const communicationProvider = env.COMMUNICATION_PROVIDER?.trim();
   if (!communicationProvider) {
     errors.push("COMMUNICATION_PROVIDER is required in production");
-  } else if (communicationProvider !== "disabled") {
-    errors.push("COMMUNICATION_PROVIDER is not supported by this build");
+  } else if (deployment === "staging" && communicationProvider !== "deterministic") {
+    errors.push("Staging requires COMMUNICATION_PROVIDER=deterministic");
+  } else if (deployment === "production" && communicationProvider !== "disabled") {
+    errors.push("Production requires COMMUNICATION_PROVIDER=disabled until a live adapter is implemented");
+  }
+
+  if (deployment === "staging") {
+    const webhookSecretError = secretValidationError(
+      "COMMUNICATION_TEST_WEBHOOK_SECRET",
+      env.COMMUNICATION_TEST_WEBHOOK_SECRET,
+    );
+    if (webhookSecretError) errors.push(webhookSecretError);
+    const webhookSecret = env.COMMUNICATION_TEST_WEBHOOK_SECRET?.trim();
+    for (const name of PRODUCTION_SECRET_NAMES) {
+      if (webhookSecret && webhookSecret === env[name]?.trim()) {
+        errors.push(`COMMUNICATION_TEST_WEBHOOK_SECRET and ${name} must be independent secrets`);
+      }
+    }
   }
 
 

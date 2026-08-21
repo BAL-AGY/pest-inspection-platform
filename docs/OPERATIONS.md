@@ -4,6 +4,8 @@
 
 - `GET /api/health/live` proves the Next.js process can serve HTTP. It performs
   no dependency calls and returns only `{ "status": "ok" }`.
+- `GET /api/health` is the stable host-facing aggregate check. It returns only
+  `healthy`/`unhealthy`, without naming an unavailable dependency.
 - `GET /api/health/ready` checks PostgreSQL with `SELECT 1` and Redis with
   `PING`, each with a short timeout. It returns 200/`ready` only when both are
   usable, otherwise 503/`not_ready`.
@@ -53,7 +55,9 @@ The app has no continuous worker or queue today. A scheduler should POST to
 message dedupe are PostgreSQL-backed, so retries are safe. The scheduler must
 alert on non-2xx results and must never log its Authorization header.
 
-Staging keeps `COMMUNICATION_PROVIDER=disabled`. When live adapters are added,
+Staging keeps `COMMUNICATION_PROVIDER=deterministic`, which performs no network
+I/O and records simulated provider acceptance. It is protected by the explicit
+staging boundary and staging-only webhook secret. When live adapters are added,
 provider webhooks target the public HTTPS route and must pass the adapter's
 signature/replay checks. Provider delivery attempts are never inferred from a
 200 health check or scheduler invocation.

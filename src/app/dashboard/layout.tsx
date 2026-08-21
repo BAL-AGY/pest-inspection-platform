@@ -3,6 +3,7 @@ import Link from "next/link";
 import { requireSession } from "@/lib/require-session";
 import { signOut } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { isStagingEnvironment } from "@/lib/environment";
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
   const session = await requireSession();
@@ -20,7 +21,12 @@ export default async function DashboardLayout({ children }: { children: React.Re
     <div className="flex-1 flex flex-col bg-zinc-50 text-zinc-900">
       <header className="border-b border-zinc-200 bg-white">
         <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between gap-4">
-          <span className="flex items-center gap-3 font-bold">Owner Dashboard{company?.isDemo && <span className="rounded-full bg-amber-100 px-2 py-1 text-xs text-amber-800">DEMO DATA</span>}</span>
+          <span className="flex flex-wrap items-center gap-2 font-bold">
+            Owner Dashboard
+            {isStagingEnvironment() && <span className="rounded-full bg-sky-100 px-2 py-1 text-xs text-sky-800">STAGING</span>}
+            {company?.isDemo && <span className="rounded-full bg-amber-100 px-2 py-1 text-xs text-amber-800">DEMO DATA</span>}
+            {isStagingEnvironment() && <span className="rounded-full bg-violet-100 px-2 py-1 text-xs text-violet-800">MESSAGES SIMULATED</span>}
+          </span>
           <form
             action={async () => {
               "use server";

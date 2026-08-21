@@ -68,6 +68,11 @@ before this audit.
 - [x] Provider-neutral GitHub Actions CI: PostgreSQL 17 + Redis service
       containers, migration deploy/status, typecheck, lint, Vitest, full
       Playwright and production build. Deployment remains deliberately absent.
+- [x] Staging launch preparation: explicit staging runtime boundary, strict
+      no-network simulated communications, guarded owner/demo provisioning,
+      deterministic demo economics fixtures, aggregate health endpoint,
+      Render environment checklist, and client walkthrough. No external
+      resource has been created and no deployment has occurred.
 
 ## 2. Database
 

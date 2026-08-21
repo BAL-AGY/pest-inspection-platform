@@ -15,3 +15,10 @@ test("readiness verifies the real PostgreSQL and Redis dependencies", async ({ r
   expect(body).toEqual({ status: "ready" });
   expect(JSON.stringify(body)).not.toMatch(/postgres|redis|url|host|password|secret/i);
 });
+
+test("aggregate health is stable and non-sensitive", async ({ request }) => {
+  const response = await request.get("/api/health");
+  expect(response.status()).toBe(200);
+  expect(response.headers()["cache-control"]).toBe("no-store");
+  expect(await response.json()).toEqual({ status: "healthy" });
+});

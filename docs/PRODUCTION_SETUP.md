@@ -84,8 +84,10 @@ memory/eviction policy that does not discard active limiter keys unexpectedly.
 For local testing, `REDIS_URL=redis://localhost:6379` is sufficient; never copy
 that value into production.
 
-The deterministic communications/webhook adapters are test-only and rejected
-by production validation. See `docs/COMMUNICATIONS.md` for the exact vendor,
+The deterministic communications/webhook adapters are rejected by the true
+production boundary. Explicit staging may use them only with
+`DEPLOYMENT_ENV=staging`, `COMMUNICATION_PROVIDER=deterministic`, and a strong
+staging-only webhook secret. See `docs/STAGING.md` and `docs/COMMUNICATIONS.md` for the exact vendor,
 sender, credential, webhook, and scheduler configuration still required.
 
 ## PostgreSQL release ordering

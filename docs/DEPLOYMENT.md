@@ -104,14 +104,19 @@ separately reviewed database restore is required.
 Maintain two isolated host environments:
 
 - **staging**: separate database, Redis, secrets and owner; `Company.isDemo`
-  true; synthetic data only; communications disabled; no production webhook
-  credentials;
+  true; synthetic data only; the deterministic no-network communications
+  adapter; a staging-only webhook secret; no live-provider credentials;
 - **production**: non-demo company, production secrets and managed services;
   real customer data only after launch approval.
 
 Do not let preview deployments point at persistent staging or production
 databases by default. A preview needing integration data must receive its own
 disposable resources or remain build-only.
+
+The exact Render environment matrix, explicit owner/demo provisioning commands,
+and post-deploy checklist are in `docs/STAGING.md`. Web startup never seeds or
+resets data. Render should run migrations as its pre-deploy command, then start
+the ordinary Next.js server.
 
 ## Domain, TLS and proxy boundary
 

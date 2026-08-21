@@ -96,6 +96,12 @@ deliberately ergonomic. Production owner provisioning is an explicit seed
 operation with mandatory safe credentials; it never logs a password or resets
 an existing hash. See `docs/PRODUCTION_SETUP.md`.
 
+Deployed staging uses `NODE_ENV=production` with the separate, explicit
+`DEPLOYMENT_ENV=staging` boundary. This preserves production secret,
+PostgreSQL, and Redis checks while allowing only the deterministic no-network
+communications adapter. Production is the fail-safe default and rejects that
+adapter. See `docs/STAGING.md`.
+
 ### Authorization
 
 Coarse-grained today: `src/lib/require-session.ts` resolves
