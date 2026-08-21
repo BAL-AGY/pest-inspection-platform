@@ -527,10 +527,17 @@ before this audit.
       include `companyId` — this covers the query-construction logic but is
       not a substitute for a real two-company end-to-end test.
 - [ ] Component-level UI tests
-- [ ] **(gap, audit)** Additional e2e scenarios still missing: lost
-      outcome, no-show, second-company isolation. Reschedule (and
-      concurrent/capacity booking races) are now covered as of Step 15 —
-      see `e2e/communication-log.spec.ts` and `e2e/booking-security.spec.ts`.
+- [x] **(closed 2026-08-21 — autonomous session)** Lost-outcome and
+      no-show e2e scenarios, added in `e2e/appointment-outcomes.spec.ts`:
+      booking → mark no-show → CRM UI + persisted DB state; and
+      contact-captured lead → mark lost → CRM UI + persisted
+      `customer_lost` status + confirms no revenue is attributed. Both
+      sanity-checked by temporarily breaking the underlying server action
+      and confirming the test fails, then reverted.
+- [ ] **(gap, audit)** Second-company cross-tenant isolation still lacks a
+      dedicated e2e scenario. Reschedule (and concurrent/capacity booking
+      races) are covered as of Step 15 — see
+      `e2e/communication-log.spec.ts` and `e2e/booking-security.spec.ts`.
 
 ## 16. Deployment
 

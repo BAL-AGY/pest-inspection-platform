@@ -83,3 +83,50 @@ test("marking a booked appointment as a no-show persists and is reflected in the
   );
   expect(persisted?.status).toBe("no_show");
 });
+
+test("marking a lead's outcome as lost records it and never attributes revenue", async ({ page }) => {
+  const stamp = Date.now();
+  const visitorId = `e2e-lost-${stamp}`;
+  let leadId: string | null = null;
+  let leadToken: string | null = null;
+  for (const answers of [
+    { zipCode: "73301" },
+    { isHomeowner: true },
+    { pestType: "fleas" },
+    { pestSeverity: "severe" },
+    { hasExistingProvider: false },
+    { timeline: "asap" },
+  ]) {
+    const r = await page.request.post("/api/leads", { data: { visitorId, leadId, leadToken, answers } });
+    const body = await r.json();
+    leadId = body.lead.id;
+    leadToken = body.leadToken;
+  }
+  const contactRes = await page.request.post("/api/leads", {
+    data: {
+      visitorId,
+      leadId,
+      leadToken,
+      contact: { firstName: "Lost", lastName: `Test${stamp}`, email: `lost.${stamp}@example.com`, phone: "+15125550177" },
+    },
+  });
+  const contactBody = await contactRes.json();
+  expect(contactBody.lead.classification).toBe("sql");
+
+  await page.goto("/login");
+  await page.getByPlaceholder("Email").fill(OWNER_EMAIL);
+  await page.getByPlaceholder("Password").fill(OWNER_PASSWORD);
+  await page.getByRole("button", { name: /sign in/i }).click();
+  await expect(page).toHaveURL(/\/dashboard/);
+
+  await page.goto(`/dashboard/leads/${leadId}`);
+  await page.getByRole("button", { name: "Mark Lost" }).click();
+  await expect(page).toHaveURL(new RegExp(`/dashboard/leads/${leadId}$`));
+  await expect(page.getByText(/current outcome:\s*lost/i)).toBeVisible();
+
+  const verifyRes = await page.request.get(`/api/leads/${leadId}`);
+  const verifyBody = await verifyRes.json();
+  expect(verifyBody.lead.outcome).toBe("lost");
+  expect(verifyBody.lead.status).toBe("customer_lost");
+  expect(verifyBody.lead.contractValueCents).toBeNull();
+});
