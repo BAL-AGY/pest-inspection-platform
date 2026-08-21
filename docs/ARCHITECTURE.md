@@ -86,6 +86,16 @@ are embedded in the JWT/session via the `jwt`/`session` callbacks so every
 authenticated request can resolve tenant + role without an extra DB round
 trip.
 
+Production security configuration is centralized in
+`src/lib/environment.ts`. Node startup instrumentation and the auth,
+funnel-capability, and rate-limiter runtime paths reject missing, weak,
+placeholder, or reused `AUTH_SECRET`, `FUNNEL_CAPABILITY_SECRET`, and
+`RATE_LIMIT_IDENTIFIER_SECRET` values. Each secret is a separate trust domain;
+none may fall back to another in production. Development/test remain
+deliberately ergonomic. Production owner provisioning is an explicit seed
+operation with mandatory safe credentials; it never logs a password or resets
+an existing hash. See `docs/PRODUCTION_SETUP.md`.
+
 ### Authorization
 
 Coarse-grained today: `src/lib/require-session.ts` resolves
@@ -326,7 +336,7 @@ implemented here to keep this change scoped to the security fix.
 checked by temporarily reverting the fix and confirming the test
 genuinely fails, then re-applying it).
 
-**Production secret behavior (Step 17).** `getSecret()` in
+**Production secret behavior (Steps 17 and 21).** `getSecret()` in
 `src/lib/funnel-capability.ts` now fails closed: in production
 (`NODE_ENV=production`) `FUNNEL_CAPABILITY_SECRET` is required with **no
 fallback whatsoever** — reusing `AUTH_SECRET` is dev/test-only
@@ -348,6 +358,15 @@ from client code — `funnel-capability.ts` is documented server-only and
 is only ever imported from `src/app/api/**` route handlers; Next.js also
 never bundles non-`NEXT_PUBLIC_`-prefixed env vars into client JS as a
 structural backstop.
+
+Step 21 generalized this into `src/lib/environment.ts`: `AUTH_SECRET`,
+`FUNNEL_CAPABILITY_SECRET`, and `RATE_LIMIT_IDENTIFIER_SECRET` are all required
+in production, must be at least 32 characters, must not be a known/example
+placeholder, and must be pairwise distinct. Instrumentation calls the central
+validator at startup; security-sensitive runtime paths call it again as defense
+in depth. Production seeding likewise refuses deterministic development owner
+credentials and requires explicit safe values. Full operator requirements are
+in `docs/PRODUCTION_SETUP.md`.
 
 **Token lifetime and storage (Step 17).** Tokens are no longer purely
 deterministic — they now embed a plaintext-but-HMAC-covered `issuedAt`
@@ -690,12 +709,12 @@ priority:
     Remaining limitation: the current provider is in-memory; replace it
     through `RateLimitStore` with a shared backend or verified edge/WAF
     control before multi-instance traffic. See `docs/ENDPOINT_SECURITY.md`.
-15. **Seed script has a hardcoded default owner password
-    (`"changeme123"`)** with no `NODE_ENV`/production guard
-    (`prisma/seed.ts`) — confirmed by direct inspection. Running
-    `npm run db:seed` against a production database without setting
-    `SEED_OWNER_PASSWORD` creates or leaves in place a full-access owner
-    account with a publicly known password. Not fixed in this pass.
+15. ~~**Seed script had a hardcoded production-capable default owner
+    password.**~~ **Fixed (Step 21).** Deterministic owner credentials remain
+    available only for development/test. Production seeding requires explicit
+    validated credentials, rejects the development identity and weak/default
+    passwords, never prints plaintext, and leaves an existing user's password
+    hash unchanged. See `docs/PRODUCTION_SETUP.md`.
 
 None of these block the platform from functioning end-to-end (TASKS.md's
 verified-working claims stand); they're the gaps between "works" and

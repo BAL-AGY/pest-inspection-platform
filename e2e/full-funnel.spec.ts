@@ -116,8 +116,11 @@ test("real prospect moves through the full acquisition-to-outcome journey", asyn
 
   // 16-17. Owner dashboard and funnel analytics reflect the real booking.
   await expect(page.getByText(/cost per qualified booked inspection/i)).toBeVisible();
-  const inspectionsTodayCard = page.getByText("Booked today").locator("..");
-  await expect(inspectionsTodayCard).toContainText(/[1-9]/);
+  // The first available appointment can legitimately be a later company-local
+  // day (for example when this suite runs after business hours). Assert the
+  // all-time booked funnel metric, not the operational "today" bucket.
+  const bookedInspectionsCard = page.getByText("Booked inspections").locator("..");
+  await expect(bookedInspectionsCard).toContainText(/[1-9]/);
 
   // 13-15. Appointment + lead visible in CRM/pipeline/calendar.
   await page.goto("/dashboard/leads");

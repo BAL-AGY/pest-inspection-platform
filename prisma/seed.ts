@@ -8,12 +8,12 @@ import { PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
 import { DEFAULT_SCORING_RULES } from "../src/lib/scoring";
 import { DEFAULT_BUSINESS_HOURS } from "../src/lib/scheduling";
+import { resolveSeedOwnerConfig } from "../src/lib/seed-config";
 
 const prisma = new PrismaClient();
 
 async function main() {
-  const ownerEmail = process.env.SEED_OWNER_EMAIL ?? "owner@example.com";
-  const ownerPassword = process.env.SEED_OWNER_PASSWORD ?? "changeme123";
+  const { email: ownerEmail, password: ownerPassword } = resolveSeedOwnerConfig();
 
   const company = await prisma.company.upsert({
     where: { slug: "demo-pest-control" },
@@ -67,7 +67,7 @@ async function main() {
   });
 
   console.log(`Seeded company "${company.name}" (${company.slug}).`);
-  console.log(`Owner login: ${ownerEmail} / ${ownerPassword}`);
+  console.log(`Owner account ensured for ${ownerEmail}; password was not changed if it already existed.`);
 }
 
 main()

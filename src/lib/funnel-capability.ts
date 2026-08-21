@@ -52,6 +52,7 @@
  */
 
 import crypto from "crypto";
+import { assertProductionEnvironment } from "./environment";
 
 const isProduction = process.env.NODE_ENV === "production";
 
@@ -64,6 +65,7 @@ const isProduction = process.env.NODE_ENV === "production";
 export const LEAD_TOKEN_TTL_MS = 4 * 60 * 60 * 1000;
 
 function getSecret(): string {
+  assertProductionEnvironment();
   const dedicated = process.env.FUNNEL_CAPABILITY_SECRET;
   if (dedicated) return dedicated;
 

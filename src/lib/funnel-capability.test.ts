@@ -3,6 +3,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 describe("funnel-capability", () => {
   const originalSecret = process.env.FUNNEL_CAPABILITY_SECRET;
   const originalAuthSecret = process.env.AUTH_SECRET;
+  const originalRateLimitSecret = process.env.RATE_LIMIT_IDENTIFIER_SECRET;
   const originalNodeEnv = process.env.NODE_ENV;
 
   beforeEach(() => {
@@ -13,6 +14,7 @@ describe("funnel-capability", () => {
   afterEach(() => {
     process.env.FUNNEL_CAPABILITY_SECRET = originalSecret;
     process.env.AUTH_SECRET = originalAuthSecret;
+    process.env.RATE_LIMIT_IDENTIFIER_SECRET = originalRateLimitSecret;
     vi.stubEnv("NODE_ENV", originalNodeEnv ?? "test");
     vi.useRealTimers();
   });
@@ -96,7 +98,10 @@ describe("funnel-capability", () => {
   });
 
   it("in production, issues and verifies tokens normally once FUNNEL_CAPABILITY_SECRET is set", async () => {
-    process.env.FUNNEL_CAPABILITY_SECRET = "a-real-production-secret";
+    process.env.AUTH_SECRET = "auth_8CRvxgYQm4zkjS7f9uN2dL6pW3aT1hKe";
+    process.env.FUNNEL_CAPABILITY_SECRET = "funnel_p2Tz7Jk5Xc9Qn4Vm8Ld1Wr6Hs3Ay0BgF";
+    process.env.RATE_LIMIT_IDENTIFIER_SECRET =
+      "ratelimit_M7kq4Pw9Xs2Fc8Vn5Dz1Ha6Rj3Te0LuB";
     vi.stubEnv("NODE_ENV", "production");
     vi.resetModules();
     const { issueLeadToken, verifyLeadToken } = await import("./funnel-capability");

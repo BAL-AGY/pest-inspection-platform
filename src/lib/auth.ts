@@ -2,6 +2,11 @@ import NextAuth from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import bcrypt from "bcryptjs";
 import { prisma } from "./prisma";
+import { assertProductionEnvironment } from "./environment";
+
+// Runtime defense in depth for code paths that load Auth.js without the
+// Next.js instrumentation hook (custom servers, scripts, or changed hosting).
+assertProductionEnvironment();
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
   session: { strategy: "jwt" },

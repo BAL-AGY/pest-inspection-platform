@@ -124,11 +124,16 @@ before this audit.
       accepting `leadId`/`visitorId`/`companyId`/a token found no further
       instance of this bypass pattern. See `docs/GOAL_AUDIT.md` and
       `docs/ARCHITECTURE.md` for full detail.
-- [ ] **(gap, audit — 2026-08-21 Codex)** `prisma/seed.ts` has a hardcoded
-      default owner password (`"changeme123"`) with no `NODE_ENV`/
-      production guard. Running `npm run db:seed` against production
-      without setting `SEED_OWNER_PASSWORD` grants full dashboard access
-      with a publicly known password.
+- [x] **(fixed — Step 21)** Production credential and seed hardening.
+      `src/lib/environment.ts` centrally requires strong, independent
+      `AUTH_SECRET`, `FUNNEL_CAPABILITY_SECRET`, and
+      `RATE_LIMIT_IDENTIFIER_SECRET` values in production; common
+      placeholders, values shorter than 32 characters, missing values, and
+      cross-secret reuse fail startup and sensitive runtime paths without
+      logging values. `prisma/seed.ts` retains deterministic dev/test data but
+      requires explicit non-development owner credentials in production,
+      never logs plaintext passwords, and never overwrites an existing hash.
+      See `docs/PRODUCTION_SETUP.md`.
 
 ## 4. Public landing page
 
@@ -379,7 +384,8 @@ before this audit.
       production-startup env validation, and centralized rate-policy/store/
       proxy-trust behavior, plus qualification schema/progression/company-
       eligibility behavior plus company-calendar/DST scheduling and
-      reporting boundaries (111 tests, `npm run test` —
+      reporting boundaries plus production environment/seed credential
+      validation and bcrypt verification (127 tests, `npm run test` —
       re-verified passing 2026-08-21)
 - [x] End-to-end test of the full required journey — traffic → landing →
       funnel → lead → scoring → MQL/SQL → availability → booking →

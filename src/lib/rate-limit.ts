@@ -1,5 +1,6 @@
 import crypto from "crypto";
 import { NextRequest, NextResponse } from "next/server";
+import { assertProductionEnvironment } from "./environment";
 
 export const RATE_LIMIT_POLICIES = {
   leadCreate: { limit: 6, windowMs: 60 * 60_000, globalLimit: 300 },
@@ -81,6 +82,7 @@ export function resetRateLimitStore() {
 }
 
 function identifierSecret(): crypto.BinaryLike {
+  assertProductionEnvironment();
   return process.env.RATE_LIMIT_IDENTIFIER_SECRET || processSalt;
 }
 
