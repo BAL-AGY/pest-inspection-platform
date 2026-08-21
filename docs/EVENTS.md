@@ -92,6 +92,11 @@ need to react to these transitions.
 
 ## Attribution completeness
 
+The landing CTA preserves its incoming query string when navigating to the
+inspection funnel, so UTM/click parameters captured on the landing visit are
+also present when the Lead is created. The full browser journey asserts that
+the resulting source and campaign appear on the exact owner-facing lead.
+
 Only `visit` and `assessment_start` carry attribution resolved fresh at
 the moment of the event. Every other event either copies the lead's
 first-touch attribution (`contact_captured`, `lead_created`, `mql`, `sql`,

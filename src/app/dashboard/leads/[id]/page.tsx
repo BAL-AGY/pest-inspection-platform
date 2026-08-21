@@ -6,6 +6,26 @@ import { LEAD_STATUSES } from "@/lib/pipeline";
 import { cancelAppointmentAndNotify } from "@/lib/appointment-actions";
 import { parseCompanyTimeZone } from "@/lib/company";
 import { formatInCompanyTime } from "@/lib/timezone";
+import { QUALIFICATION_QUESTIONS, parseStoredQualificationAnswers } from "@/lib/qualification";
+
+const EVENT_LABELS: Record<string, string> = {
+  lead_created: "Lead created",
+  contact_captured: "Contact details captured",
+  mql: "Became marketing qualified (MQL)",
+  sql: "Became sales qualified (SQL)",
+  scheduler_viewed: "Viewed inspection availability",
+  appointment_booked: "Booked free home inspection",
+  appointment_completed: "Inspection completed",
+  customer_won: "Customer won",
+  customer_lost: "Customer lost",
+};
+
+function answerLabel(questionId: string, value: unknown): string {
+  const question = QUALIFICATION_QUESTIONS.find((candidate) => candidate.id === questionId);
+  if (typeof value === "boolean") return value ? "Yes" : "No";
+  if (typeof value !== "string") return "—";
+  return question?.options?.find((option) => option.value === value)?.label ?? value;
+}
 
 export default async function LeadDetailPage({
   params,
@@ -29,25 +49,32 @@ export default async function LeadDetailPage({
   if (!company) notFound();
   const timeZone = parseCompanyTimeZone(company);
 
-  const answers = lead.qualificationAnswers ? JSON.parse(lead.qualificationAnswers) : {};
+  const answers = parseStoredQualificationAnswers(lead.qualificationAnswers);
 
   async function addNote(formData: FormData) {
     "use server";
+    const actionSession = await requireSession();
+    if (!actionSession) return;
     const body = String(formData.get("body") ?? "").trim();
-    if (!body) return;
-    await prisma.leadNote.create({ data: { leadId: id, body, authorId: session!.email } });
+    if (!body || body.length > 5_000) return;
+    const ownedLead = await prisma.lead.findFirst({ where: { id, companyId: actionSession.companyId } });
+    if (!ownedLead) return;
+    await prisma.leadNote.create({ data: { leadId: id, body, authorId: actionSession.email } });
     revalidatePath(`/dashboard/leads/${id}`);
   }
 
   async function updateStatus(formData: FormData) {
     "use server";
+    const actionSession = await requireSession();
+    if (!actionSession) return;
     const status = String(formData.get("status"));
-    const current = await prisma.lead.findFirst({ where: { id, companyId: session!.companyId } });
+    if (!LEAD_STATUSES.includes(status as (typeof LEAD_STATUSES)[number])) return;
+    const current = await prisma.lead.findFirst({ where: { id, companyId: actionSession.companyId } });
     if (!current) return;
     await prisma.lead.update({ where: { id }, data: { status } });
     await prisma.auditLog.create({
       data: {
-        companyId: session!.companyId,
+        companyId: actionSession.companyId,
         action: "status_change",
         entityType: "Lead",
         entityId: id,
@@ -59,12 +86,18 @@ export default async function LeadDetailPage({
 
   async function setOutcome(formData: FormData) {
     "use server";
+    const actionSession = await requireSession();
+    if (!actionSession) return;
     const outcome = String(formData.get("outcome"));
+    if (outcome !== "won" && outcome !== "lost") return;
     const contractValueRaw = formData.get("contractValue");
     const contractValueCents =
       contractValueRaw && String(contractValueRaw).trim() !== ""
         ? Math.round(Number(contractValueRaw) * 100)
         : undefined;
+    if (contractValueCents !== undefined && (!Number.isFinite(contractValueCents) || contractValueCents < 0)) return;
+    const ownedLead = await prisma.lead.findFirst({ where: { id, companyId: actionSession.companyId } });
+    if (!ownedLead) return;
     await prisma.lead.update({
       where: { id },
       data: {
@@ -75,10 +108,17 @@ export default async function LeadDetailPage({
     });
     await prisma.funnelEvent.create({
       data: {
-        companyId: session!.companyId,
+        companyId: actionSession.companyId,
         leadId: id,
-        visitorId: lead!.visitorId ?? id,
+        visitorId: ownedLead.visitorId ?? id,
         eventType: outcome === "won" ? "customer_won" : "customer_lost",
+        source: ownedLead.source,
+        medium: ownedLead.medium,
+        campaign: ownedLead.campaign,
+        content: ownedLead.content,
+        term: ownedLead.term,
+        landingPage: ownedLead.landingPage,
+        clickId: ownedLead.clickId,
       },
     });
     revalidatePath(`/dashboard/leads/${id}`);
@@ -86,34 +126,63 @@ export default async function LeadDetailPage({
 
   async function completeInspection(formData: FormData) {
     "use server";
+    const actionSession = await requireSession();
+    if (!actionSession) return;
     const appointmentId = String(formData.get("appointmentId"));
-    await prisma.appointment.update({
-      where: { id: appointmentId },
-      data: { status: "completed", completedAt: new Date() },
+    const appointment = await prisma.appointment.findFirst({
+      where: { id: appointmentId, leadId: id, companyId: actionSession.companyId, status: "booked" },
     });
-    await prisma.lead.update({ where: { id }, data: { status: "inspection_completed" } });
-    await prisma.funnelEvent.create({
-      data: {
-        companyId: session!.companyId,
-        leadId: id,
-        visitorId: lead!.visitorId ?? id,
-        eventType: "appointment_completed",
-      },
-    });
+    if (!appointment) return;
+    const ownedLead = await prisma.lead.findFirst({ where: { id, companyId: actionSession.companyId } });
+    if (!ownedLead) return;
+    await prisma.$transaction([
+      prisma.appointment.update({
+        where: { id: appointmentId },
+        data: { status: "completed", completedAt: new Date() },
+      }),
+      prisma.lead.update({ where: { id }, data: { status: "inspection_completed" } }),
+      prisma.funnelEvent.create({
+        data: {
+          companyId: actionSession.companyId,
+          leadId: id,
+          visitorId: ownedLead.visitorId ?? id,
+          eventType: "appointment_completed",
+          source: ownedLead.source,
+          medium: ownedLead.medium,
+          campaign: ownedLead.campaign,
+          content: ownedLead.content,
+          term: ownedLead.term,
+          landingPage: ownedLead.landingPage,
+          clickId: ownedLead.clickId,
+        },
+      }),
+    ]);
     revalidatePath(`/dashboard/leads/${id}`);
   }
 
   async function markNoShow(formData: FormData) {
     "use server";
+    const actionSession = await requireSession();
+    if (!actionSession) return;
     const appointmentId = String(formData.get("appointmentId"));
+    const appointment = await prisma.appointment.findFirst({
+      where: { id: appointmentId, leadId: id, companyId: actionSession.companyId, status: "booked" },
+    });
+    if (!appointment) return;
     await prisma.appointment.update({ where: { id: appointmentId }, data: { status: "no_show" } });
     revalidatePath(`/dashboard/leads/${id}`);
   }
 
   async function cancelAppointment(formData: FormData) {
     "use server";
+    const actionSession = await requireSession();
+    if (!actionSession) return;
     const appointmentId = String(formData.get("appointmentId"));
-    await cancelAppointmentAndNotify(appointmentId, session!.companyId);
+    const appointment = await prisma.appointment.findFirst({
+      where: { id: appointmentId, leadId: id, companyId: actionSession.companyId, status: "booked" },
+    });
+    if (!appointment) return;
+    await cancelAppointmentAndNotify(appointmentId, actionSession.companyId);
     revalidatePath(`/dashboard/leads/${id}`);
   }
 
@@ -130,7 +199,7 @@ export default async function LeadDetailPage({
         </p>
       </div>
 
-      <section className="bg-white border border-zinc-200 rounded-lg p-4 grid grid-cols-2 sm:grid-cols-3 gap-4 text-sm">
+      <section aria-label="Lead summary" className="bg-white border border-zinc-200 rounded-lg p-4 grid grid-cols-2 sm:grid-cols-3 gap-4 text-sm">
         <div>
           <p className="text-zinc-500">Score</p>
           <p className="font-semibold">{lead.score}</p>
@@ -152,24 +221,33 @@ export default async function LeadDetailPage({
           <p className="font-semibold">{lead.pestConcern ?? "—"}</p>
         </div>
         <div>
-          <p className="text-zinc-500">Source</p>
-          <p className="font-semibold">{lead.source ?? "direct"}</p>
+          <p className="text-zinc-500">Homeowner</p>
+          <p className="font-semibold">{lead.isHomeowner === null ? "—" : lead.isHomeowner ? "Yes" : "No"}</p>
         </div>
-        {lead.hasExistingProvider && (
-          <div className="col-span-2 sm:col-span-3">
-            <p className="text-zinc-500">Switcher reason</p>
-            <p className="font-semibold">{lead.switchReason ?? "—"}</p>
-          </div>
-        )}
+        <div>
+          <p className="text-zinc-500">Current pest provider</p>
+          <p className="font-semibold">{lead.hasExistingProvider === null ? "—" : lead.hasExistingProvider ? "Yes" : "No"}</p>
+        </div>
+        {lead.hasExistingProvider && <div><p className="text-zinc-500">Switcher reason</p><p className="font-semibold">{answerLabel("switchReason", lead.switchReason)}</p></div>}
+      </section>
+
+      <section>
+        <h2 className="text-sm font-semibold text-zinc-500 uppercase mb-2">Attribution</h2>
+        <div className="bg-white border border-zinc-200 rounded-lg p-4 grid grid-cols-2 sm:grid-cols-3 gap-4 text-sm">
+          <div><p className="text-zinc-500">Source</p><p className="font-semibold">{lead.source ?? "direct"}</p></div>
+          <div><p className="text-zinc-500">Medium</p><p className="font-semibold">{lead.medium ?? "—"}</p></div>
+          <div><p className="text-zinc-500">Campaign</p><p className="font-semibold">{lead.campaign ?? "—"}</p></div>
+          <div className="col-span-2 sm:col-span-3"><p className="text-zinc-500">Landing page</p><p className="font-semibold break-all">{lead.landingPage ?? "—"}</p></div>
+        </div>
       </section>
 
       <section>
         <h2 className="text-sm font-semibold text-zinc-500 uppercase mb-2">Qualification answers</h2>
         <div className="bg-white border border-zinc-200 rounded-lg p-4 text-sm grid grid-cols-2 gap-2">
-          {Object.entries(answers).map(([key, value]) => (
-            <div key={key}>
-              <span className="text-zinc-500">{key}: </span>
-              <span className="font-medium">{String(value)}</span>
+          {QUALIFICATION_QUESTIONS.filter((question) => question.id in answers).map((question) => (
+            <div key={question.id}>
+              <span className="text-zinc-500">{question.prompt} </span>
+              <span className="font-medium">{answerLabel(question.id, answers[question.id])}</span>
             </div>
           ))}
         </div>
@@ -282,8 +360,8 @@ export default async function LeadDetailPage({
         <div className="flex flex-col gap-1 text-sm text-zinc-600">
           {lead.funnelEvents.map((e) => (
             <div key={e.id} className="flex justify-between">
-              <span>{e.eventType}</span>
-              <span className="text-zinc-400">{new Date(e.createdAt).toLocaleString()}</span>
+              <span>{EVENT_LABELS[e.eventType] ?? e.eventType.replaceAll("_", " ")}</span>
+              <span className="text-zinc-400">{formatInCompanyTime(e.createdAt, timeZone, { dateStyle: "medium", timeStyle: "short" })}</span>
             </div>
           ))}
         </div>

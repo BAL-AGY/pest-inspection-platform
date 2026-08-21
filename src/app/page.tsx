@@ -1,16 +1,22 @@
-"use client";
-
 import Link from "next/link";
-import { useEffect } from "react";
-import { track } from "@/lib/visitor";
+import LandingTracker from "./landing-tracker";
 
-export default function LandingPage() {
-  useEffect(() => {
-    track("visit");
-  }, []);
+export default async function LandingPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const query = new URLSearchParams();
+  for (const [key, rawValue] of Object.entries(await searchParams)) {
+    for (const value of Array.isArray(rawValue) ? rawValue : [rawValue]) {
+      if (value !== undefined) query.append(key, value);
+    }
+  }
+  const inspectionHref = query.size > 0 ? `/inspection?${query.toString()}` : "/inspection";
 
   return (
     <main className="flex-1 flex flex-col bg-white text-zinc-900">
+      <LandingTracker />
       <section className="flex-1 flex flex-col justify-center px-6 py-16 sm:py-24 max-w-3xl mx-auto text-center gap-6">
         <p className="text-sm font-semibold tracking-wide text-emerald-700 uppercase">
           Free, no-obligation home inspection
@@ -25,7 +31,7 @@ export default function LandingPage() {
         </p>
         <div className="flex justify-center pt-2">
           <Link
-            href="/inspection"
+            href={inspectionHref}
             className="inline-flex items-center justify-center rounded-md bg-emerald-700 px-8 py-4 text-lg font-semibold text-white shadow hover:bg-emerald-800 transition-colors w-full sm:w-auto"
           >
             Get My Free Inspection

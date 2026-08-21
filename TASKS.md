@@ -9,6 +9,16 @@ Lead/Appointment state machines, and `docs/GOAL_AUDIT.md` for the full
 requirement-by-requirement audit against the master /goal — all reviewed
 and current as of 2026-08-20.
 
+**2026-08-21 demo-readiness checkpoints:** The real homeowner path now handles
+empty/non-JSON/error API responses without crashing or advancing unsaved
+answers. The expanded browser journey verifies landing UTM preservation,
+qualification, booking/confirmation, owner login, readable qualification and
+attribution detail, calendar linkage, notes, completion, outcome, and dashboard
+updates. Lead-detail Server Actions reauthenticate and reassert tenant/lead/
+appointment ownership before writes. Full verification: 136/136 Vitest and
+37/37 Playwright tests, typecheck, lint, PostgreSQL/Redis coverage, and
+production build.
+
 **2026-08-20 full-goal audit**: `npm run test` (51/51), `npx tsc --noEmit`
 (0 errors), `npm run lint` (0 errors), `npm run build` (succeeds, all 19
 routes), and `npx playwright test` (1/1, live) were all re-run fresh as

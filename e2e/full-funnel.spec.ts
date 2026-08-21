@@ -130,6 +130,24 @@ test("real prospect moves through the full acquisition-to-outcome journey", asyn
   await leadCard.click();
   await expect(page).toHaveURL(new RegExp(leadId));
   await expect(page.locator("p.uppercase", { hasText: "sql" })).toBeVisible();
+  await expect(page.getByLabel("Lead summary").getByText("73301", { exact: true })).toBeVisible();
+  await expect(page.getByText("Termites", { exact: true })).toBeVisible();
+  await expect(page.getByText("google", { exact: true })).toBeVisible();
+  await expect(page.getByText("e2e_playwright", { exact: true })).toBeVisible();
+  await expect(page.getByText(/what's the zip code of the property/i)).toBeVisible();
+  await expect(page.getByText("Booked free home inspection", { exact: true })).toBeVisible();
+
+  const note = `Manual demo follow-up ${Date.now()}`;
+  await page.getByPlaceholder("Add a note…").fill(note);
+  await page.getByRole("button", { name: "Add", exact: true }).click();
+  await expect(page.getByText(note, { exact: true })).toBeVisible();
+
+  // The same homeowner appointment must appear on the operational calendar.
+  await page.goto("/dashboard/calendar?view=month");
+  const calendarAppointment = page.locator(`a[href="/dashboard/leads/${leadId}"]`);
+  await expect(calendarAppointment).toContainText("Jordan Rivers");
+  await calendarAppointment.click();
+  await expect(page).toHaveURL(new RegExp(leadId));
 
   // 19. Mark the inspection completed from the CRM.
   await page.getByRole("button", { name: /mark completed/i }).click();
