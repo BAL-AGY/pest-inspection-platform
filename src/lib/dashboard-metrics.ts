@@ -94,7 +94,7 @@ export async function getDashboardMetrics(companyId: string, options: { preset?:
   const range = resolveAnalyticsRange(options, timeZone, now);
   const operational = dashboardOperationalRanges(now, timeZone);
   const mode = { companyId, isDemo: company.isDemo };
-  const [inspectionsToday, inspectionsThisWeek, events, spends, sqlCount, mqlCount, noShows] = await Promise.all([
+  const [inspectionsToday, inspectionsThisWeek, events, spends, sqlCount, mqlCount, noShows, upcomingAppointments, needsFollowUp] = await Promise.all([
     prisma.appointment.count({ where: { ...mode, status: { in: ["booked", "rescheduled"] }, scheduledStart: { gte: operational.todayStart, lt: operational.tomorrowStart } } }),
     prisma.appointment.count({ where: { ...mode, status: { in: ["booked", "rescheduled"] }, scheduledStart: { gte: operational.weekStart, lt: operational.weekEnd } } }),
     prisma.funnelEvent.findMany({ where: { ...mode, createdAt: { gte: range.start, lt: range.end } }, select: { eventType: true, visitorId: true, leadId: true, appointmentId: true, funnelStep: true, source: true, medium: true, campaign: true, content: true, metadata: true, lead: { select: { pestCategory: true, pestConcern: true, actualPestCategory: true } } } }),
@@ -102,6 +102,14 @@ export async function getDashboardMetrics(companyId: string, options: { preset?:
     prisma.lead.count({ where: { ...mode, classification: "sql", createdAt: { gte: range.start, lt: range.end } } }),
     prisma.lead.count({ where: { ...mode, classification: "mql", createdAt: { gte: range.start, lt: range.end } } }),
     prisma.appointment.count({ where: { ...mode, status: "no_show", updatedAt: { gte: range.start, lt: range.end } } }),
+    // Operational "what's on my plate today" — deliberately not scoped to
+    // the selected analytics date range, since it's always "right now."
+    prisma.appointment.findMany({ where: { ...mode, status: { in: ["booked", "rescheduled"] }, scheduledStart: { gte: operational.todayStart, lt: operational.tomorrowStart } }, orderBy: { scheduledStart: "asc" }, select: { id: true, scheduledStart: true, status: true, lead: { select: { id: true, firstName: true, lastName: true, phone: true, pestConcern: true } } } }),
+    // Qualified leads that never made it to a booked inspection — the
+    // owner's manual follow-up worklist while live reminders aren't wired
+    // up yet. Not date-range scoped: a qualified lead from last week who
+    // still hasn't booked is exactly who needs a call today.
+    prisma.lead.findMany({ where: { ...mode, classification: { in: ["mql", "sql"] }, status: { notIn: ["inspection_booked", "inspection_completed", "customer_won", "customer_lost"] } }, orderBy: [{ score: "desc" }, { createdAt: "desc" }], take: 15, select: { id: true, firstName: true, lastName: true, phone: true, email: true, classification: true, score: true, zipCode: true, pestConcern: true, createdAt: true } }),
   ]);
   const funnelCounts = computeFunnelCounts(events); const funnelStages = computeFunnelReport(events);
   const stage = (key: string) => funnelStages.find((item) => item.key === key)?.count ?? 0;
@@ -120,6 +128,16 @@ export async function getDashboardMetrics(companyId: string, options: { preset?:
     visitorToStartRate: visitors ? funnelStarts / visitors : null, leadToQualifiedRate: newLeads ? qualifiedCount / newLeads : null, qualifiedToBookedRate: qualifiedCount ? bookedCount / qualifiedCount : null,
     marketingPerformance: campaignPerformance(events, spends),
     pestCategoryPerformance: pestCategoryPerformance(events, parsePestCategories(company)),
+    upcomingAppointments: upcomingAppointments.map((a) => ({
+      id: a.id, scheduledStart: a.scheduledStart, status: a.status,
+      leadId: a.lead.id, name: [a.lead.firstName, a.lead.lastName].filter(Boolean).join(" ") || "Unnamed lead",
+      phone: a.lead.phone, pestConcern: a.lead.pestConcern,
+    })),
+    needsFollowUp: needsFollowUp.map((l) => ({
+      id: l.id, name: [l.firstName, l.lastName].filter(Boolean).join(" ") || "Unnamed lead",
+      phone: l.phone, email: l.email, classification: l.classification, score: l.score,
+      zipCode: l.zipCode, pestConcern: l.pestConcern, createdAt: l.createdAt,
+    })),
   };
 }
 export type DashboardMetrics = Awaited<ReturnType<typeof getDashboardMetrics>>;
