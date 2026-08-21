@@ -93,7 +93,7 @@ test.describe("communication delivery log", () => {
     const confirmations = lead.communications.filter((c) => c.type === "appointment_confirmation");
     expect(confirmations.length).toBeGreaterThan(0);
     for (const c of confirmations) {
-      expect(c.status).toBe("sent");
+      expect(c.status).toBe("accepted");
       expect(c.leadId).toBe(leadId);
       expect(c.companyId).toBe(lead.companyId);
       expect(c.appointmentId).toBe(appointmentId);
@@ -109,7 +109,7 @@ test.describe("communication delivery log", () => {
     lead = await getLead(page, leadId);
     const rescheduled = lead.communications.filter((c) => c.type === "appointment_rescheduled");
     expect(rescheduled.length).toBe(1);
-    expect(rescheduled[0].status).toBe("sent");
+    expect(rescheduled[0].status).toBe("accepted");
     expect(rescheduled[0].appointmentId).toBe(appointmentId);
 
     // 3. Cancel — should persist a SENT appointment_cancelled record.
@@ -121,7 +121,7 @@ test.describe("communication delivery log", () => {
     lead = await getLead(page, leadId);
     const cancelled = lead.communications.filter((c) => c.type === "appointment_cancelled");
     expect(cancelled.length).toBe(1);
-    expect(cancelled[0].status).toBe("sent");
+    expect(cancelled[0].status).toBe("accepted");
     expect(cancelled[0].appointmentId).toBe(appointmentId);
   });
 
@@ -157,7 +157,7 @@ test.describe("communication delivery log", () => {
     const confirmations = lead.communications.filter((c) => c.type === "appointment_confirmation");
     expect(confirmations.length).toBeGreaterThan(0);
     for (const c of confirmations) {
-      expect(c.status).toBe("blocked");
+      expect(c.status).toBe("suppressed");
       expect(c.blockedReason).toBeTruthy();
     }
   });

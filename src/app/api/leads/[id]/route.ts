@@ -62,6 +62,22 @@ export async function PATCH(
   const resolvedStatus =
     outcome === "won" ? "customer_won" : outcome === "lost" ? "customer_lost" : status ?? existing.status;
 
+  // Persist the durable suppression first. If the subsequent lead update
+  // fails, sends still fail closed; the inverse ordering briefly allowed an
+  // opted-out lead to exist without its cross-session suppression entry.
+  if (optedOut && (existing.email || existing.phone)) {
+    await recordSuppression({
+      companyId: session.companyId,
+      channel: "all",
+      email: existing.email,
+      phone: existing.phone,
+      reason: "opted_out",
+      source: "crm_manual_optout",
+      scope: "all",
+      metadata: { leadId: id },
+    });
+  }
+
   const lead = await prisma.lead.update({
     where: { id },
     data: {
@@ -70,6 +86,12 @@ export async function PATCH(
       lostReason: lostReason ?? existing.lostReason,
       contractValueCents: contractValueCents ?? existing.contractValueCents,
       optedOutAt: optedOut ? new Date() : existing.optedOutAt,
+      emailOptedOutAt: optedOut ? new Date() : existing.emailOptedOutAt,
+      smsOptedOutAt: optedOut ? new Date() : existing.smsOptedOutAt,
+      emailConsent: optedOut ? false : existing.emailConsent,
+      smsConsent: optedOut ? false : existing.smsConsent,
+      emailMarketingConsent: optedOut ? false : existing.emailMarketingConsent,
+      smsMarketingConsent: optedOut ? false : existing.smsMarketingConsent,
     },
   });
 
@@ -82,21 +104,6 @@ export async function PATCH(
         entityId: id,
         metadata: JSON.stringify({ from: existing.status, to: resolvedStatus }),
       },
-    });
-  }
-
-  if (optedOut && (existing.email || existing.phone)) {
-    // Persist the opt-out into the durable, cross-lead suppression system —
-    // not just onto this one Lead row — so later leads/sessions from the
-    // same contact inherit the protection (see docs/GOAL_AUDIT.md).
-    await recordSuppression({
-      companyId: session.companyId,
-      channel: "all", // matches the existing undifferentiated optedOutAt semantics
-      email: existing.email,
-      phone: existing.phone,
-      reason: "opted_out",
-      source: "crm_manual_optout",
-      metadata: { leadId: id },
     });
   }
 

@@ -84,7 +84,8 @@ test("opted-out contact stays suppressed across a brand new lead/session", async
   expect(second.leadId).not.toBe(first.leadId);
   expect(second.lead.emailConsent).toBe(false);
   expect(second.lead.smsConsent).toBe(false);
-  expect(second.lead.optedOutAt).toBeTruthy();
+  expect(second.lead.emailOptedOutAt).toBeTruthy();
+  expect(second.lead.smsOptedOutAt).toBeTruthy();
 
   // 6. An unrelated, never-suppressed contact is unaffected — suppression
   // must not over-block contacts who never opted out.

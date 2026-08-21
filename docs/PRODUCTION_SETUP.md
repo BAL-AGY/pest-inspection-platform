@@ -16,6 +16,10 @@ independent.
   enforcement across every application instance. Use `rediss://`/TLS in
   production unless the provider supplies an equivalently protected private
   network.
+- `COMMUNICATION_PROVIDER`: currently must be `disabled`; no live adapter ships
+  in this checkpoint.
+- `COMMUNICATION_JOB_SECRET`: independent random bearer secret used by the
+  deployment scheduler for `/api/internal/communications/run`.
 
 Generate each secret independently with a cryptographically secure generator,
 for example `openssl rand -base64 32`. Do not reuse a value between variables.
@@ -76,6 +80,10 @@ Redis authentication, TLS, monitoring/alerting, high availability, and a
 memory/eviction policy that does not discard active limiter keys unexpectedly.
 For local testing, `REDIS_URL=redis://localhost:6379` is sufficient; never copy
 that value into production.
+
+The deterministic communications/webhook adapters are test-only and rejected
+by production validation. See `docs/COMMUNICATIONS.md` for the exact vendor,
+sender, credential, webhook, and scheduler configuration still required.
 
 ## PostgreSQL release ordering
 

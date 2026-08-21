@@ -316,27 +316,26 @@ before this audit.
 
 ## 13. Communications
 
+- [x] **(implemented Step 24)** Provider-neutral production architecture:
+      durable pre-send reservation/deduplication, explicit transactional vs
+      marketing purpose, provider-account tenant mapping, authenticated and
+      replay-bounded webhook adapter contract, idempotent delivery/inbound
+      processing, channel-specific STOP/unsubscribe, lifecycle analytics
+      events, and authenticated reminder/follow-up job entry point. See
+      `docs/COMMUNICATIONS.md`.
+
 - [x] Provider-abstraction interface with consent/opt-out gating
       (`src/lib/communications.ts`) — every send checked against consent
       before dispatch
 - [x] Confirmation, reminder, reschedule, cancellation, and follow-up
       message templates
-- [x] Dev provider (console log) — real send path, no live vendor wired up
-- [x] **(fixed 2026-08-20 — Step 11)** `Communication` delivery log (see
-      Database, milestone 2) — `src/lib/communication-log.ts`'s
-      `logCommunication()`, written exclusively from the shared send gate
-      (`sendIfAllowed()` in `src/lib/suppression.ts`), so booking
-      confirmation, reschedule, and cancellation sends all log without any
-      call site duplicating the logic. One row per send *attempt*: status
-      is `blocked` (suppressed or missing/absent consent, with
-      `blockedReason`), `sent` (provider accepted — not proof of delivery),
-      or `failed` (provider threw or declined, with `failureReason`).
-      `queued`/`delivered`/`bounced`/`undeliverable` are declared in
-      `COMMUNICATION_TYPES`/`COMMUNICATION_STATUSES` (`src/lib/pipeline.ts`)
-      for a future async/webhook-driven provider but nothing writes them
-      yet. Queryable via `GET /api/leads/[id]` (`lead.communications`); no
-      CRM UI renders it (out of scope for this fix). See
-      `docs/GOAL_AUDIT.md` for full detail.
+- [x] Deterministic development/test provider — no network I/O and no PII
+      console logging; production rejects it
+- [x] Durable communication lifecycle: blocked/suppressed/attempted/accepted/
+      failed/delivered/bounced/received/opted-out states with distinct
+      timestamps, provider correlation, pre-send database reservation, and
+      authenticated webhook updates. Provider acceptance is never counted as
+      delivery.
 - [x] **(fixed 2026-08-20 — Step 9)** Durable, cross-lead/cross-session
       suppression — `src/lib/suppression.ts`. A contact who opts out is
       recorded in `SuppressionEntry` (normalized email/phone, company-scoped)
@@ -348,22 +347,18 @@ before this audit.
       `smsConsent`/`emailConsent` for a suppressed identifier, and surfaces
       `optedOutAt` on the new Lead row. Opting a lead out via the existing
       CRM mechanism (`PATCH /api/leads/[id]` `{ optedOut: true }`) now also
-      writes to `SuppressionEntry`. See `docs/GOAL_AUDIT.md` for full
-      before/after detail, the marketing-vs-transactional limitation
-      (no distinction exists in the current system, so suppression blocks
-      all sends uniformly, matching existing `canSend` behavior), and what's
-      still open (no suppression-management UI, no un-suppress flow).
+      writes to `SuppressionEntry`. Step 24 adds channel-specific opt-out
+      timestamps and marketing-vs-transactional consent/suppression scope.
+      No suppression-management UI or deliberate re-consent flow exists yet.
 - [x] **(bug, audit — fixed 2026-08-20)** Cancellation messages now send
       consistently regardless of which UI path staff use (see Scheduling,
       milestone 7, for the fix)
-- [ ] **(gap, audit)** Reminder message template exists
-      (`MESSAGE_TEMPLATES.appointmentReminder`) but nothing triggers it —
-      no scheduled/timed job exists to actually send reminders
+- [x] Authenticated, idempotent job runner for 24-hour appointment reminders
+      and qualified-not-booked follow-up; production still needs the host's
+      scheduler configured
 - [ ] Live email/SMS provider integration (deliberately deferred — no
       vendor chosen; see ARCHITECTURE.md)
-- [ ] Scheduled/automated reminders and qualified-not-booked follow-up
-      (currently only fires on booking/reschedule/cancel actions, not on a
-      timer)
+- [ ] Configure a production scheduler to call the authenticated job endpoint
 
 ## 14. Settings
 

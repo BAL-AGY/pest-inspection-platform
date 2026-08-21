@@ -18,6 +18,7 @@ export const PRODUCTION_SECRET_NAMES = [
   "AUTH_SECRET",
   "FUNNEL_CAPABILITY_SECRET",
   "RATE_LIMIT_IDENTIFIER_SECRET",
+  "COMMUNICATION_JOB_SECRET",
 ] as const;
 
 export type ProductionSecretName = (typeof PRODUCTION_SECRET_NAMES)[number];
@@ -68,6 +69,13 @@ export function validateProductionEnvironment(
     } catch {
       errors.push("REDIS_URL must be a valid Redis URL");
     }
+  }
+
+  const communicationProvider = env.COMMUNICATION_PROVIDER?.trim();
+  if (!communicationProvider) {
+    errors.push("COMMUNICATION_PROVIDER is required in production");
+  } else if (communicationProvider !== "disabled") {
+    errors.push("COMMUNICATION_PROVIDER is not supported by this build");
   }
 
   for (let left = 0; left < PRODUCTION_SECRET_NAMES.length; left += 1) {

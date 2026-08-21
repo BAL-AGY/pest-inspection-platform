@@ -41,15 +41,17 @@ model Company {
   createdAt DateTime @default(now()) @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @db.Timestamptz(3)
 
-  users              User[]
-  inspectors         Inspector[]
-  leads              Lead[]
-  appointments       Appointment[]
-  funnelEvents       FunnelEvent[]
-  marketingSpend     MarketingSpend[]
-  auditLogs          AuditLog[]
-  suppressionEntries SuppressionEntry[]
-  communications     Communication[]
+  users                         User[]
+  inspectors                    Inspector[]
+  leads                         Lead[]
+  appointments                  Appointment[]
+  funnelEvents                  FunnelEvent[]
+  marketingSpend                MarketingSpend[]
+  auditLogs                     AuditLog[]
+  suppressionEntries            SuppressionEntry[]
+  communications                Communication[]
+  communicationProviderAccounts CommunicationProviderAccount[]
+  communicationWebhookEvents    CommunicationWebhookEvent[]
 }
 
 // ---------------------------------------------------------------------------
@@ -95,10 +97,12 @@ model Lead {
   company   Company @relation(fields: [companyId], references: [id])
 
   // Contact
-  firstName String?
-  lastName  String?
-  email     String?
-  phone     String?
+  firstName       String?
+  lastName        String?
+  email           String?
+  phone           String?
+  normalizedEmail String?
+  normalizedPhone String?
 
   // Property
   addressLine1 String?
@@ -141,11 +145,21 @@ model Lead {
   visitorId   String? // anonymous id set pre-identification, links to FunnelEvents
 
   // Communications consent (TCPA/CAN-SPAM boundaries)
-  smsConsent     Boolean   @default(false)
-  smsConsentAt   DateTime? @db.Timestamptz(3)
-  emailConsent   Boolean   @default(false)
-  emailConsentAt DateTime? @db.Timestamptz(3)
-  optedOutAt     DateTime? @db.Timestamptz(3)
+  smsConsent                  Boolean   @default(false)
+  smsConsentAt                DateTime? @db.Timestamptz(3)
+  smsConsentSource            String?
+  smsMarketingConsent         Boolean   @default(false)
+  smsMarketingConsentAt       DateTime? @db.Timestamptz(3)
+  smsMarketingConsentSource   String?
+  smsOptedOutAt               DateTime? @db.Timestamptz(3)
+  emailConsent                Boolean   @default(false)
+  emailConsentAt              DateTime? @db.Timestamptz(3)
+  emailConsentSource          String?
+  emailMarketingConsent       Boolean   @default(false)
+  emailMarketingConsentAt     DateTime? @db.Timestamptz(3)
+  emailMarketingConsentSource String?
+  emailOptedOutAt             DateTime? @db.Timestamptz(3)
+  optedOutAt                  DateTime? @db.Timestamptz(3)
 
   createdAt DateTime @default(now()) @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @db.Timestamptz(3)
@@ -157,6 +171,8 @@ model Lead {
 
   @@index([companyId, status])
   @@index([visitorId])
+  @@index([companyId, normalizedEmail])
+  @@index([companyId, normalizedPhone])
 }
 
 model LeadNote {
@@ -281,6 +297,7 @@ model SuppressionEntry {
 
   channel String // "email" | "sms" | "all" ("all" = blanket opt-out, matches
   // the existing undifferentiated Lead.optedOutAt semantics — see canSend)
+  scope   String @default("all") // "marketing" | "all"
 
   identifierType  String // "email" | "phone"
   identifierValue String // normalized (see src/lib/suppression.ts)
@@ -310,8 +327,15 @@ model Communication {
   appointmentId String?
   appointment   Appointment? @relation(fields: [appointmentId], references: [id])
 
-  channel String // "email" | "sms"
-  type    String // see src/lib/pipeline.ts COMMUNICATION_TYPES
+  providerAccountId String?
+  providerAccount   CommunicationProviderAccount? @relation(fields: [providerAccountId], references: [id])
+
+  channel   String // "email" | "sms"
+  type      String // see src/lib/pipeline.ts COMMUNICATION_TYPES
+  direction String @default("outbound") // "outbound" | "inbound"
+  purpose   String @default("transactional") // "transactional" | "marketing"
+  provider  String @default("development")
+  dedupeKey String
 
   status String // see src/lib/pipeline.ts COMMUNICATION_STATUSES
   // "blocked" | "queued" | "sent" | "failed" | "delivered" | "bounced" |
@@ -323,15 +347,67 @@ model Communication {
   failureReason String? // set when status = "failed" — provider-reported error/rejection
 
   to                String // destination address/number targeted for this attempt
+  from              String?
   subject           String? // email only
+  body              String? // inbound reply content only; outbound bodies are not persisted
   providerMessageId String? // set once a live provider accepts the send; correlates future delivery-status webhooks. Unset while only the dev provider is wired up.
 
-  attemptedAt DateTime @default(now()) @db.Timestamptz(3)
-  updatedAt   DateTime @updatedAt @db.Timestamptz(3)
+  attemptedAt      DateTime  @default(now()) @db.Timestamptz(3)
+  acceptedAt       DateTime? @db.Timestamptz(3)
+  deliveredAt      DateTime? @db.Timestamptz(3)
+  failedAt         DateTime? @db.Timestamptz(3)
+  bouncedAt        DateTime? @db.Timestamptz(3)
+  receivedAt       DateTime? @db.Timestamptz(3)
+  providerStatusAt DateTime? @db.Timestamptz(3)
+  updatedAt        DateTime  @updatedAt @db.Timestamptz(3)
 
+  webhookEvents CommunicationWebhookEvent[]
+
+  @@unique([companyId, dedupeKey])
+  @@unique([companyId, provider, providerMessageId])
   @@index([companyId, leadId])
   @@index([companyId, status])
   @@index([appointmentId])
+}
+
+model CommunicationProviderAccount {
+  id                String   @id @default(cuid())
+  companyId         String
+  company           Company  @relation(fields: [companyId], references: [id])
+  provider          String
+  externalAccountId String
+  channel           String
+  address           String?
+  active            Boolean  @default(true)
+  createdAt         DateTime @default(now()) @db.Timestamptz(3)
+
+  communications Communication[]
+  webhookEvents  CommunicationWebhookEvent[]
+
+  @@unique([provider, externalAccountId])
+  @@index([companyId, channel])
+}
+
+model CommunicationWebhookEvent {
+  id                String                       @id @default(cuid())
+  companyId         String
+  company           Company                      @relation(fields: [companyId], references: [id])
+  providerAccountId String
+  providerAccount   CommunicationProviderAccount @relation(fields: [providerAccountId], references: [id])
+  communicationId   String?
+  communication     Communication?               @relation(fields: [communicationId], references: [id])
+  provider          String
+  providerEventId   String
+  eventType         String
+  payloadHash       String
+  outcome           String
+  occurredAt        DateTime                     @db.Timestamptz(3)
+  receivedAt        DateTime                     @default(now()) @db.Timestamptz(3)
+  processedAt       DateTime?                    @db.Timestamptz(3)
+
+  @@unique([provider, providerEventId])
+  @@index([companyId, receivedAt])
+  @@index([communicationId])
 }
 
 // ---------------------------------------------------------------------------

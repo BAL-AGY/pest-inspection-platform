@@ -37,7 +37,12 @@ export default function InspectionFunnelPage() {
   const [stage, setStage] = useState<Stage>("questions");
   const [submitting, setSubmitting] = useState(false);
   const [contact, setContact] = useState({ firstName: "", lastName: "", email: "", phone: "" });
-  const [consent, setConsent] = useState({ sms: false, email: true });
+  const [consent, setConsent] = useState({
+    sms: false,
+    email: false,
+    smsMarketing: false,
+    emailMarketing: false,
+  });
   const [slots, setSlots] = useState<{ start: string; end: string }[]>([]);
   const [companyTimeZone, setCompanyTimeZone] = useState<string | null>(null);
   const [slotsError, setSlotsError] = useState<string | null>(null);
@@ -105,6 +110,8 @@ export default function InspectionFunnelPage() {
           contact,
           smsConsent: consent.sms,
           emailConsent: consent.email,
+          smsMarketingConsent: consent.smsMarketing,
+          emailMarketingConsent: consent.emailMarketing,
           attribution: attributionFromLocation(),
         }),
       });
@@ -244,12 +251,40 @@ export default function InspectionFunnelPage() {
             <label className="flex items-start gap-2 text-sm text-zinc-600">
               <input
                 type="checkbox"
+                checked={consent.email}
+                onChange={(e) => setConsent({ ...consent, email: e.target.checked })}
+                className="mt-1"
+              />
+              Email me appointment confirmations and reminders.
+            </label>
+            <label className="flex items-start gap-2 text-sm text-zinc-600">
+              <input
+                type="checkbox"
                 checked={consent.sms}
                 onChange={(e) => setConsent({ ...consent, sms: e.target.checked })}
                 className="mt-1"
               />
               Text me appointment confirmations and reminders. Msg &amp; data rates may
               apply. Reply STOP to opt out.
+            </label>
+            <label className="flex items-start gap-2 text-sm text-zinc-600">
+              <input
+                type="checkbox"
+                checked={consent.emailMarketing}
+                onChange={(e) => setConsent({ ...consent, emailMarketing: e.target.checked })}
+                className="mt-1"
+              />
+              Email me helpful pest-control follow-up and offers. Unsubscribe anytime.
+            </label>
+            <label className="flex items-start gap-2 text-sm text-zinc-600">
+              <input
+                type="checkbox"
+                checked={consent.smsMarketing}
+                onChange={(e) => setConsent({ ...consent, smsMarketing: e.target.checked })}
+                className="mt-1"
+              />
+              Text me pest-control follow-up and offers. Msg &amp; data rates may apply.
+              Reply STOP to opt out.
             </label>
             <button
               disabled={submitting}

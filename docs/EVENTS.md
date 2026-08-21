@@ -49,6 +49,12 @@ Every `FunnelEvent` row carries:
 | `appointment_completed` | Appointment marked complete | `PATCH /api/appointments/[id]` (`action: "complete"`) and the dashboard lead-detail page action | **none** |
 | `customer_won` | Lead outcome set to `"won"` | `PATCH /api/leads/[id]` | **none** |
 | `customer_lost` | Lead outcome set to `"lost"` | `PATCH /api/leads/[id]` | **none** |
+| `communication_attempted` | Durable outbound reservation succeeds | `sendIfAllowed()` | communication metadata only |
+| `communication_accepted` | Provider accepts an outbound request | `sendIfAllowed()` | communication metadata only |
+| `communication_delivered` | Authenticated provider webhook confirms delivery | communication webhook | communication metadata only |
+| `communication_failed` / `communication_bounced` | Provider request/status fails | send gate or webhook | communication metadata only |
+| `communication_inbound` | Authenticated inbound reply is associated to a lead | communication webhook | no message body |
+| `communication_opted_out` | Authenticated inbound STOP/unsubscribe is processed | communication webhook | no message body |
 
 ## Requested taxonomy → implementation, with gaps
 

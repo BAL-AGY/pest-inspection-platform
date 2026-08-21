@@ -14,7 +14,7 @@ import {
   validateQualificationSubmission,
 } from "@/lib/qualification";
 import { requireSession } from "@/lib/require-session";
-import { suppressedChannels } from "@/lib/suppression";
+import { normalizeEmail, normalizePhone, suppressedChannels } from "@/lib/suppression";
 import { issueLeadToken, verifyLeadToken } from "@/lib/funnel-capability";
 import {
   enforceRateLimit,
@@ -51,6 +51,8 @@ const upsertSchema = z.object({
   attribution: attributionSchema.optional(),
   smsConsent: z.boolean().optional(),
   emailConsent: z.boolean().optional(),
+  smsMarketingConsent: z.boolean().optional(),
+  emailMarketingConsent: z.boolean().optional(),
 }).strict();
 
 const STATUS_RANK = [
@@ -75,7 +77,7 @@ export async function POST(req: NextRequest) {
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
   }
-  const { visitorId, leadId, leadToken, answers, contact, attribution, smsConsent, emailConsent } =
+  const { visitorId, leadId, leadToken, answers, contact, attribution, smsConsent, emailConsent, smsMarketingConsent, emailMarketingConsent } =
     parsed.data;
 
   const network = trustedClientAddress(req);
@@ -204,8 +206,6 @@ export async function POST(req: NextRequest) {
     email: resolvedEmail,
     phone: resolvedPhone,
   });
-  const isSuppressedContact = suppressed.email || suppressed.sms;
-
   const isNew = !existing;
   const becameMql = classification === "mql" && existing?.classification !== "mql" && existing?.classification !== "sql";
   const becameSql = classification === "sql" && existing?.classification !== "sql";
@@ -221,6 +221,8 @@ export async function POST(req: NextRequest) {
     lastName: contact?.lastName ?? existing?.lastName,
     email: contact?.email ?? existing?.email,
     phone: contact?.phone ?? existing?.phone,
+    normalizedEmail: resolvedEmail ? normalizeEmail(resolvedEmail) : null,
+    normalizedPhone: resolvedPhone ? normalizePhone(resolvedPhone) : null,
     isHomeowner:
       typeof qualification.answers.isHomeowner === "boolean"
         ? qualification.answers.isHomeowner
@@ -256,18 +258,46 @@ export async function POST(req: NextRequest) {
     // consent flags the request carried — a suppressed contact does not
     // silently regain marketing permission by re-entering the funnel.
     smsConsent: suppressed.sms ? false : smsConsent ?? existing?.smsConsent ?? false,
-    smsConsentAt: suppressed.sms ? existing?.smsConsentAt ?? null : smsConsent ? new Date() : existing?.smsConsentAt,
+    smsConsentAt: suppressed.sms
+      ? existing?.smsConsentAt ?? null
+      : smsConsent
+        ? existing?.smsConsentAt ?? new Date()
+        : existing?.smsConsentAt,
+    smsConsentSource: smsConsent ? existing?.smsConsentSource ?? "public_funnel" : existing?.smsConsentSource,
+    smsMarketingConsent: suppressed.smsMarketing
+      ? false
+      : smsMarketingConsent ?? existing?.smsMarketingConsent ?? false,
+    smsMarketingConsentAt: smsMarketingConsent
+      ? existing?.smsMarketingConsentAt ?? new Date()
+      : existing?.smsMarketingConsentAt,
+    smsMarketingConsentSource: smsMarketingConsent
+      ? existing?.smsMarketingConsentSource ?? "public_funnel"
+      : existing?.smsMarketingConsentSource,
+    smsOptedOutAt: suppressed.sms ? existing?.smsOptedOutAt ?? new Date() : existing?.smsOptedOutAt,
     emailConsent: suppressed.email ? false : emailConsent ?? existing?.emailConsent ?? false,
     emailConsentAt: suppressed.email
       ? existing?.emailConsentAt ?? null
       : emailConsent
-        ? new Date()
+        ? existing?.emailConsentAt ?? new Date()
         : existing?.emailConsentAt,
+    emailConsentSource: emailConsent
+      ? existing?.emailConsentSource ?? "public_funnel"
+      : existing?.emailConsentSource,
+    emailMarketingConsent: suppressed.emailMarketing
+      ? false
+      : emailMarketingConsent ?? existing?.emailMarketingConsent ?? false,
+    emailMarketingConsentAt: emailMarketingConsent
+      ? existing?.emailMarketingConsentAt ?? new Date()
+      : existing?.emailMarketingConsentAt,
+    emailMarketingConsentSource: emailMarketingConsent
+      ? existing?.emailMarketingConsentSource ?? "public_funnel"
+      : existing?.emailMarketingConsentSource,
+    emailOptedOutAt: suppressed.email ? existing?.emailOptedOutAt ?? new Date() : existing?.emailOptedOutAt,
     // Surface suppression status on the lead itself (in addition to the
     // durable, send-time gate) so the CRM shows the true state immediately
     // rather than only when a send is attempted. Never clears an
     // independently-set optedOutAt.
-    optedOutAt: isSuppressedContact ? existing?.optedOutAt ?? new Date() : existing?.optedOutAt,
+    optedOutAt: existing?.optedOutAt,
   };
 
   const lead = existing

@@ -13,6 +13,8 @@ controls implemented in `src/lib/rate-limit.ts` and the route handlers.
 | `/api/appointments` | POST | Public lead-scoped write | Capability, booking rate policy, server-rederived qualification/eligibility gate, server slot validation, atomic DB constraint |
 | `/api/auth/**` | POST | Public authentication write | Auth.js plus auth rate policy |
 | `/api/auth/**` | GET | Public authentication read | Auth.js-managed flows |
+| `/api/webhooks/communications/[provider]` | POST | Public provider write | Adapter-owned signature/timestamp verification, strict schema, shared rate policy, provider-event idempotency, server-side provider-account tenant mapping |
+| `/api/internal/communications/run` | POST | Internal/server-only write | Timing-safe bearer secret; database-idempotent message keys |
 | `/api/leads` | GET | Authenticated read | Session + company scope |
 | `/api/leads/[id]` | GET | Authenticated read | Session + company scope |
 | `/api/leads/[id]` | PATCH | Authenticated write | Session + company scope + Zod |
@@ -38,6 +40,7 @@ not maintain their own counters.
 | Availability | 40 | 5 minutes | verified lead + trusted network |
 | Booking attempts | 12 | 15 minutes | verified lead + trusted network |
 | Auth POST actions | 10 | 15 minutes | normalized account/CSRF session + trusted network |
+| Communication webhooks | 600 | 1 minute | verified provider account + trusted network |
 
 Each policy also has a higher shared emergency ceiling so rotating
 visitor identifiers cannot create an entirely unbounded request stream on a

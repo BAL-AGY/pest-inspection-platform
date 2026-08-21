@@ -221,6 +221,10 @@ export async function POST(req: NextRequest) {
   const consent = {
     emailConsent: lead.emailConsent,
     smsConsent: lead.smsConsent,
+    smsMarketingConsent: lead.smsMarketingConsent,
+    emailMarketingConsent: lead.emailMarketingConsent,
+    smsOptedOutAt: lead.smsOptedOutAt,
+    emailOptedOutAt: lead.emailOptedOutAt,
     optedOutAt: lead.optedOutAt,
   };
   const name = lead.firstName ?? "there";
@@ -237,6 +241,8 @@ export async function POST(req: NextRequest) {
         leadId: lead.id,
         appointmentId: appointment.id,
         type: "appointment_confirmation",
+        purpose: "transactional",
+        dedupeKey: `appointment:${appointment.id}:confirmation:email`,
         consent,
       },
     );
@@ -253,6 +259,8 @@ export async function POST(req: NextRequest) {
         leadId: lead.id,
         appointmentId: appointment.id,
         type: "appointment_confirmation",
+        purpose: "transactional",
+        dedupeKey: `appointment:${appointment.id}:confirmation:sms`,
         consent,
       },
     );

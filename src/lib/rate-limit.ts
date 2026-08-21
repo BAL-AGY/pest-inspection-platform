@@ -10,6 +10,7 @@ export const RATE_LIMIT_POLICIES = {
   availability: { limit: 40, windowMs: 5 * 60_000, globalLimit: 2_000 },
   booking: { limit: 12, windowMs: 15 * 60_000, globalLimit: 300 },
   auth: { limit: 10, windowMs: 15 * 60_000, globalLimit: 300 },
+  communicationWebhook: { limit: 600, windowMs: 60_000, globalLimit: 5_000 },
 } as const;
 
 export type RateLimitPolicyName = keyof typeof RATE_LIMIT_POLICIES;

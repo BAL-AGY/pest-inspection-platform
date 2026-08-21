@@ -36,7 +36,7 @@ and report real numbers, over a polished-looking demo.
 | Database (dev/test/production) | PostgreSQL | PostgreSQL 17.11 is verified locally for fresh migrations, the full application suite, and real concurrent booking/reschedule races. One database engine across environments avoids provider-specific migration and transaction drift. No managed production vendor is selected yet. See `docs/POSTGRESQL.md`. |
 | Auth | Auth.js (NextAuth) v5, credentials provider | Owner/staff login for the dashboard. No OAuth vendor assumed. Passwords hashed (bcrypt/argon2), sessions via database sessions (tenant + role on the session). |
 | Validation | Zod | Shared validation for funnel input, API route input, and scoring/qualification rule definitions. |
-| Communications (email/SMS) | Provider-abstraction interface with a console/log "dev" provider | Confirmation, reminder, and follow-up sends go through one interface (`sendEmail`, `sendSms`) so a real provider (e.g. an ESP, Twilio-compatible SMS API) can be plugged in via env config later without touching call sites. No live third-party credentials are assumed, configured, or fabricated. Every send path enforces consent/opt-out state before sending, and TCPA/CAN-SPAM-relevant fields (opt-in timestamp, opt-out status, quiet hours) are modeled from the start even before a real provider is wired in. |
+| Communications (email/SMS) | Provider-neutral outbound + inbound adapters; deterministic test adapter only | PostgreSQL reserves idempotent sends before provider calls, provider webhooks own signature verification, and tenant mapping/status/STOP processing are centralized. No live vendor or credential is fabricated. See `docs/COMMUNICATIONS.md`. |
 | Testing | Vitest (unit/integration) + Playwright (end-to-end) | Vitest covers scoring, qualification, scheduling/double-booking, attribution, and analytics calculations as pure, deterministic logic. Playwright drives the actual browser through the full lead→inspection→outcome journey against the running app. |
 | Deployment target | Node-compatible host running the Next.js production build (e.g. Vercel or a container) | No vendor contracted. `next build` / `next start` must pass; deployment config stays host-agnostic (env vars, no vendor-specific lock-in beyond what Next.js itself requires). |
 
@@ -414,62 +414,23 @@ and `companyId` is never client-supplied anywhere in the public routes
 
 ### Messaging provider abstraction
 
-`src/lib/communications.ts` defines a `CommunicationProvider` interface
-(`send(message)`) with a swappable singleton (`getProvider`/`setProvider`)
-and a console-logging dev implementation as the only one wired up today —
-no live vendor is configured or assumed. `canSend()`/`sendIfConsented()`
-remain the pure, per-lead consent/opt-out gate.
+**Step 24 supersedes the historical description below.** The original console
+provider/post-send log has been replaced by a no-network deterministic adapter,
+durable pre-send reservation, explicit purpose/direction/status timestamps,
+provider-account tenant mapping, authenticated/idempotent inbound webhooks, and
+an authenticated reminder/follow-up job runner. Production rejects the test
+adapter and currently supports only `COMMUNICATION_PROVIDER=disabled`. The
+authoritative design is `docs/COMMUNICATIONS.md`.
 
-`src/lib/suppression.ts` (added 2026-08-20, Step 9) sits in front of that
-gate as the actual call-site entry point: `sendIfAllowed()` checks the
-durable, company-scoped `SuppressionEntry` table (normalized email/phone)
-*before* falling through to `sendIfConsented()`, so a contact who opted out
-stays suppressed even under a brand new `Lead`/`visitorId`, which
-`Lead.optedOutAt` alone could not guarantee. Every send call site
-(`POST /api/appointments`, the reschedule action in
-`PATCH /api/appointments/[id]`, and `cancelAppointmentAndNotify()`) uses
-`sendIfAllowed()`, not `sendIfConsented()` directly. `POST /api/leads` also
-checks suppression at write time (via `suppressedChannels()`) so a
-suppressed contact's `smsConsent`/`emailConsent` can't be reactivated by
-resubmitting the funnel, and so `optedOutAt` is visible on the new Lead row
-immediately rather than only surfacing the next time a send is attempted.
-This module intentionally breaks from the "pure lib, no Prisma" convention
-used by `communications.ts` itself — it's a persistence-backed orchestration
-layer, the same category as `appointment-actions.ts`, not business logic
-that needs to run without a database. `src/lib/suppression.test.ts` unit
-tests normalization and the gate's control flow with a mocked Prisma client;
-`e2e/suppression.spec.ts` exercises the real persistence path against the
-dev DB. **Known limitation, deliberately not addressed by this change**:
-the current system has no marketing-vs-transactional message distinction —
-every send, including booking confirmations and reschedule/cancellation
-notices, is gated identically — so suppression blocks all of them
-uniformly, matching pre-existing `canSend` behavior. A transactional-bypass
-would be a real product decision, not a data-model gap, and wasn't asked
-for.
-
-**Communication delivery log (added 2026-08-20, Step 11)**:
-`sendIfAllowed()` now also persists one `Communication` row per send
-attempt via `src/lib/communication-log.ts`'s `logCommunication()` — the
-gap flagged directly above and in `docs/GOAL_AUDIT.md` Critical Path item
-4. Precision matters here: `status: "sent"` means the provider *accepted*
-the message, not that it reached the homeowner. `status: "blocked"` covers
-both suppression and missing/absent consent (`blockedReason` records
-which); `status: "failed"` covers both a thrown provider exception and a
-provider that resolves `{ sent: false }` without throwing. `"queued"` (for
-a future async/queued provider) and `"delivered"`/`"bounced"`/
-`"undeliverable"` (for a future delivery-status webhook) are declared in
-`COMMUNICATION_STATUSES` (`src/lib/pipeline.ts`) but never written today —
-see CLAUDE.md's "never fabricate third-party integration data." Logging
-lives entirely inside `sendIfAllowed`, so booking, reschedule, and
-cancellation call sites needed no independent logging logic of their own —
-they only had to start passing `leadId`/`appointmentId`/`type` through the
-existing call. A logging write failure is caught and reported to console
-rather than propagated, so a logging outage can never block a real send
-attempt. Tenant/lead scoping matches every other table (`companyId`/
-`leadId` on every row, asserted directly in
-`src/lib/suppression.test.ts`). Queryable today via `GET /api/leads/[id]`
-(`lead.communications`); no CRM UI renders it yet — out of scope for this
-fix.
+`src/lib/communications.ts` owns pure consent/provider contracts;
+`src/lib/suppression.ts` is the persistence-backed outbound gate;
+`src/lib/communication-webhooks.ts` owns verified inbound/status processing;
+and `src/lib/communication-jobs.ts` selects due reminders/follow-up. Every
+call site uses the same durable gate. Suppression and consent are evaluated by
+channel and purpose, a database reservation precedes provider I/O, and only an
+authenticated provider event can mark a message delivered. Communication rows
+remain queryable through `GET /api/leads/[id]`; the CRM does not render the
+timeline yet.
 
 ### Attribution architecture
 
@@ -543,7 +504,8 @@ src/
     visitor.ts                 Client-side visitor/lead id/token + track() helper
     communications.ts          Provider abstraction, consent gate, templates
     suppression.ts                Durable cross-lead suppression + shared send gate
-    communication-log.ts           Persists a Communication row per send attempt
+    communication-webhooks.ts       Verified/idempotent inbound + status processing
+    communication-jobs.ts           Reminder and qualified-follow-up selection
     analytics.ts                 Pure funnel/cost/CAC/ROAS calculations
     dashboard-metrics.ts          Prisma-backed aggregation using analytics.ts
     *.test.ts                     Vitest unit tests, one per lib module above

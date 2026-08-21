@@ -12,6 +12,13 @@ export const LEAD_STATUSES = [
   "inspection_completed",
   "customer_won",
   "customer_lost",
+  "communication_attempted",
+  "communication_accepted",
+  "communication_delivered",
+  "communication_failed",
+  "communication_bounced",
+  "communication_inbound",
+  "communication_opted_out",
 ] as const;
 export type LeadStatus = (typeof LEAD_STATUSES)[number];
 
@@ -48,6 +55,8 @@ export const COMMUNICATION_TYPES = [
   "appointment_cancelled",
   "appointment_reminder",
   "qualified_not_booked_follow_up",
+  "inbound_reply",
+  "inbound_opt_out",
 ] as const;
 export type CommunicationType = (typeof COMMUNICATION_TYPES)[number];
 
@@ -59,13 +68,17 @@ export type CommunicationType = (typeof COMMUNICATION_TYPES)[number];
 // provider delivery-status webhook exists (see CLAUDE.md: never fabricate
 // third-party integration data).
 export const COMMUNICATION_STATUSES = [
+  "attempted",
   "blocked",
+  "suppressed",
   "queued",
-  "sent",
+  "accepted",
   "failed",
   "delivered",
   "bounced",
   "undeliverable",
+  "received",
+  "opted_out",
 ] as const;
 export type CommunicationStatus = (typeof COMMUNICATION_STATUSES)[number];
 

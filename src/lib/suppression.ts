@@ -16,15 +16,16 @@
  */
 
 import { prisma } from "./prisma";
+import { Prisma } from "@prisma/client";
 import {
   canSend,
-  sendIfConsented,
+  getProvider,
   type ConsentState,
+  type CommunicationPurpose,
   type MessageChannel,
   type OutboundMessage,
   type SendResult,
 } from "./communications";
-import { logCommunication } from "./communication-log";
 import type { CommunicationType } from "./pipeline";
 
 /**
@@ -75,6 +76,7 @@ export async function isSuppressed(params: {
   channel: MessageChannel;
   email?: string | null;
   phone?: string | null;
+  purpose?: CommunicationPurpose;
 }): Promise<boolean> {
   const rows = identifierRows(params);
   if (rows.length === 0) return false;
@@ -83,6 +85,7 @@ export async function isSuppressed(params: {
     where: {
       companyId: params.companyId,
       channel: { in: [params.channel, "all"] },
+      scope: { in: params.purpose === "marketing" ? ["all", "marketing"] : ["all"] },
       OR: rows.map((r) => ({ identifierType: r.identifierType, identifierValue: r.identifierValue })),
     },
   });
@@ -98,16 +101,22 @@ export async function suppressedChannels(params: {
   companyId: string;
   email?: string | null;
   phone?: string | null;
-}): Promise<{ email: boolean; sms: boolean }> {
-  const [email, sms] = await Promise.all([
+}): Promise<{ email: boolean; sms: boolean; emailMarketing: boolean; smsMarketing: boolean }> {
+  const [email, sms, emailMarketing, smsMarketing] = await Promise.all([
     params.email
       ? isSuppressed({ companyId: params.companyId, channel: "email", email: params.email })
       : Promise.resolve(false),
     params.phone
       ? isSuppressed({ companyId: params.companyId, channel: "sms", phone: params.phone })
       : Promise.resolve(false),
+    params.email
+      ? isSuppressed({ companyId: params.companyId, channel: "email", email: params.email, purpose: "marketing" })
+      : Promise.resolve(false),
+    params.phone
+      ? isSuppressed({ companyId: params.companyId, channel: "sms", phone: params.phone, purpose: "marketing" })
+      : Promise.resolve(false),
   ]);
-  return { email, sms };
+  return { email, sms, emailMarketing, smsMarketing };
 }
 
 /**
@@ -124,6 +133,7 @@ export async function recordSuppression(params: {
   reason: string;
   source: string;
   metadata?: Record<string, unknown>;
+  scope?: "marketing" | "all";
 }): Promise<void> {
   const rows = identifierRows(params);
   for (const row of rows) {
@@ -139,13 +149,14 @@ export async function recordSuppression(params: {
       create: {
         companyId: params.companyId,
         channel: params.channel,
+        scope: params.scope ?? "all",
         identifierType: row.identifierType,
         identifierValue: row.identifierValue,
         reason: params.reason,
         source: params.source,
         metadata: params.metadata ? JSON.stringify(params.metadata) : null,
       },
-      update: {},
+      update: params.scope === "all" || !params.scope ? { scope: "all" } : {},
     });
   }
 }
@@ -159,7 +170,7 @@ export async function recordSuppression(params: {
  * so suppression and delivery logging can never be bypassed by a new call
  * site duplicating the logic itself.
  *
- * `sent: true` means the provider *accepted* the message, not that the
+ * `accepted: true` means the provider accepted the message, not that the
  * homeowner received it — see communication-log.ts.
  *
  * Note: like the existing `canSend`, this does not distinguish marketing
@@ -175,10 +186,21 @@ export async function sendIfAllowed(
     companyId: string;
     leadId: string;
     appointmentId?: string | null;
-    type: CommunicationType;
+        type: CommunicationType;
+    purpose: CommunicationPurpose;
+    dedupeKey: string;
     consent: ConsentState;
   },
-): Promise<SendResult> {
+): Promise<SendResult & { duplicate?: boolean; communicationId?: string }> {
+  const provider = getProvider();
+  const providerAccount = await prisma.communicationProviderAccount.findFirst({
+    where: {
+      companyId: params.companyId,
+      provider: provider.name,
+      channel: message.channel,
+      active: true,
+    },
+  });
   const logBase = {
     companyId: params.companyId,
     leadId: params.leadId,
@@ -187,6 +209,24 @@ export async function sendIfAllowed(
     type: params.type,
     to: message.to,
     subject: message.subject,
+    purpose: params.purpose,
+    direction: "outbound",
+    provider: provider.name,
+    dedupeKey: params.dedupeKey,
+    providerAccountId: providerAccount?.id ?? null,
+  };
+
+  const createRecord = async (status: string, extra: Record<string, unknown> = {}) => {
+    try {
+      return await prisma.communication.create({ data: { ...logBase, status, ...extra } });
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+        return prisma.communication.findUnique({
+          where: { companyId_dedupeKey: { companyId: params.companyId, dedupeKey: params.dedupeKey } },
+        });
+      }
+      throw error;
+    }
   };
 
   const suppressed = await isSuppressed({
@@ -194,35 +234,90 @@ export async function sendIfAllowed(
     channel: message.channel,
     email: message.channel === "email" ? message.to : undefined,
     phone: message.channel === "sms" ? message.to : undefined,
+    purpose: params.purpose,
   });
   if (suppressed) {
-    await logCommunication({ ...logBase, status: "blocked", blockedReason: "recipient is suppressed" });
-    return { sent: false, reason: "recipient is suppressed" };
+    const row = await createRecord("suppressed", { blockedReason: "recipient is suppressed" });
+    return { accepted: false, reason: "recipient is suppressed", communicationId: row?.id };
   }
 
-  const gate = canSend(message.channel, params.consent);
-  if (!gate.sent) {
-    await logCommunication({ ...logBase, status: "blocked", blockedReason: gate.reason });
-    return gate;
+  const gate = canSend(message.channel, params.purpose, params.consent);
+  if (!gate.accepted) {
+    const row = await createRecord("blocked", { blockedReason: gate.reason });
+    return { ...gate, communicationId: row?.id };
   }
+
+  let attempt;
+  try {
+    const inserted = await prisma.communication.createMany({
+      data: [{ ...logBase, status: "attempted" }],
+      skipDuplicates: true,
+    });
+    attempt = await prisma.communication.findUniqueOrThrow({
+      where: { companyId_dedupeKey: { companyId: params.companyId, dedupeKey: params.dedupeKey } },
+    });
+    if (inserted.count === 0) {
+      return {
+        accepted: attempt.status === "accepted" || attempt.status === "delivered",
+        reason: "duplicate communication suppressed",
+        duplicate: true,
+        communicationId: attempt.id,
+        providerMessageId: attempt.providerMessageId ?? undefined,
+      };
+    }
+  } catch {
+    // No durable attempt record means no provider call. This is deliberate:
+    // accurate/idempotent communication is more important than best-effort send.
+    return { accepted: false, reason: "communication persistence unavailable" };
+  }
+
+  await prisma.funnelEvent.create({
+    data: {
+      companyId: params.companyId,
+      leadId: params.leadId,
+      visitorId: params.leadId,
+      eventType: "communication_attempted",
+      metadata: JSON.stringify({ communicationId: attempt.id, channel: message.channel, purpose: params.purpose }),
+    },
+  });
 
   try {
-    // Gate already confirmed above; sendIfConsented re-checks it (cheap,
-    // pure) and invokes the provider.
-    const result = await sendIfConsented(message, params.consent);
-    await logCommunication({
-      ...logBase,
-      status: result.sent ? "sent" : "failed",
-      failureReason: result.sent ? null : (result.reason ?? "Provider declined to send"),
-      providerMessageId: result.providerMessageId,
+    const result = await provider.send({ message, idempotencyKey: params.dedupeKey });
+    const status = result.accepted ? "accepted" : "failed";
+    await prisma.communication.update({
+      where: { id: attempt.id },
+      data: {
+        status,
+        acceptedAt: result.accepted ? new Date() : null,
+        failedAt: result.accepted ? null : new Date(),
+        failureReason: result.accepted ? null : (result.reason ?? "Provider declined to send"),
+        providerMessageId: result.providerMessageId ?? null,
+      },
     });
-    return result;
-  } catch (err) {
-    await logCommunication({
-      ...logBase,
-      status: "failed",
-      failureReason: err instanceof Error ? err.message : "Unknown provider error",
+    await prisma.funnelEvent.create({
+      data: {
+        companyId: params.companyId,
+        leadId: params.leadId,
+        visitorId: params.leadId,
+        eventType: result.accepted ? "communication_accepted" : "communication_failed",
+        metadata: JSON.stringify({ communicationId: attempt.id, channel: message.channel, purpose: params.purpose }),
+      },
     });
-    return { sent: false, reason: "provider error" };
+    return { ...result, communicationId: attempt.id };
+  } catch {
+    await prisma.communication.update({
+      where: { id: attempt.id },
+      data: { status: "failed", failedAt: new Date(), failureReason: "Provider request failed" },
+    });
+    await prisma.funnelEvent.create({
+      data: {
+        companyId: params.companyId,
+        leadId: params.leadId,
+        visitorId: params.leadId,
+        eventType: "communication_failed",
+        metadata: JSON.stringify({ communicationId: attempt.id, channel: message.channel, purpose: params.purpose }),
+      },
+    });
+    return { accepted: false, reason: "provider error", communicationId: attempt.id };
   }
 }

@@ -50,6 +50,10 @@ export async function PATCH(
   const consent = {
     emailConsent: appointment.lead.emailConsent,
     smsConsent: appointment.lead.smsConsent,
+    smsMarketingConsent: appointment.lead.smsMarketingConsent,
+    emailMarketingConsent: appointment.lead.emailMarketingConsent,
+    smsOptedOutAt: appointment.lead.smsOptedOutAt,
+    emailOptedOutAt: appointment.lead.emailOptedOutAt,
     optedOutAt: appointment.lead.optedOutAt,
   };
   const name = appointment.lead.firstName ?? "there";
@@ -178,6 +182,8 @@ export async function PATCH(
           leadId: appointment.leadId,
           appointmentId: appointment.id,
           type: "appointment_rescheduled",
+          purpose: "transactional",
+          dedupeKey: `appointment:${appointment.id}:rescheduled:${requestedStart.toISOString()}:email`,
           consent,
         },
       );

@@ -22,6 +22,13 @@ export function computeFunnelCounts(
     appointment_completed: 0,
     customer_won: 0,
     customer_lost: 0,
+    communication_attempted: 0,
+    communication_accepted: 0,
+    communication_delivered: 0,
+    communication_failed: 0,
+    communication_bounced: 0,
+    communication_inbound: 0,
+    communication_opted_out: 0,
   } as Record<FunnelEventType, number>;
 
   for (const event of events) {

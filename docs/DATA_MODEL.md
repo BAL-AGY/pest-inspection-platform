@@ -200,29 +200,19 @@ real `AvailabilityRule` entity (per-inspector hours, capacity, days off)
 is the natural next step when a second inspector is added.
 
 ### Communication — implemented 2026-08-20 (Step 11)
-`Communication(companyId, leadId, appointmentId?, channel, type, status,
-blockedReason?, failureReason?, to, subject?, providerMessageId?,
-attemptedAt, updatedAt)`. `channel` is `"email"`/`"sms"`; `type` is one of
-`COMMUNICATION_TYPES` (`src/lib/pipeline.ts`) — `appointment_confirmation`,
-`appointment_rescheduled`, `appointment_cancelled`,
-`appointment_reminder`, `qualified_not_booked_follow_up`. `status` is one
-of `COMMUNICATION_STATUSES` — today only `blocked`/`sent`/`failed` are
-ever written; `queued` exists for a future async/queued provider and
-`delivered`/`bounced`/`undeliverable` exist for a future delivery-status
-webhook, none of which this codebase writes yet (see
-`src/lib/communication-log.ts`).
+**Extended in Step 24.** `Communication` now carries direction, purpose,
+provider/account, company-scoped dedupe key, inbound sender/body, and separate
+attempted/accepted/delivered/failed/bounced/received/provider-status timestamps.
+Outbound bodies are not persisted. PostgreSQL uniqueness prevents duplicate
+automation sends and ambiguous provider-message correlation. Logging is now a
+mandatory pre-send reservation: if it fails, the provider is not called.
 
-One row is written per send **attempt**, not per successful delivery —
-`status: "sent"` means the provider *accepted* the message, never that the
-homeowner received it (see `docs/ARCHITECTURE.md` Messaging provider
-abstraction for the attempted/accepted/delivered distinction this was
-built to be precise about). Written exclusively from `sendIfAllowed()`
-(`src/lib/suppression.ts`), the same shared gate that already enforces
-suppression and consent, so no call site can independently duplicate or
-skip logging — every appointment confirmation, reschedule, and
-cancellation send goes through it. A logging failure is caught and
-reported to console rather than propagated, so a logging outage can never
-block a real booking/reschedule/cancellation.
+`CommunicationProviderAccount` maps one external provider account/sender to one
+Company without storing credentials. `CommunicationWebhookEvent` stores a
+payload hash, normalized event/outcome, correlation, and processing timestamps;
+`(provider, providerEventId)` is unique. `SuppressionEntry.scope` distinguishes
+marketing-only from all-message suppression. The authoritative current model is
+documented in `docs/COMMUNICATIONS.md`.
 
 Queryable per-lead via `GET /api/leads/[id]` (`lead.communications`,
 alongside the existing `appointments`/`funnelEvents`/`notes` includes) —
@@ -262,11 +252,9 @@ Checked in two places:
 
 Written to on CRM opt-out (`PATCH /api/leads/[id]` `{ optedOut: true }`).
 Tenant-scoped like every other table (`companyId` in every query).
-**Limitation carried over from the existing system, not introduced by this
-table**: there is no marketing-vs-transactional distinction anywhere in
-this codebase, so a suppression entry blocks all sends uniformly (including
-booking confirmations) — see `docs/ARCHITECTURE.md`'s Messaging provider
-abstraction section.
+Step 24 adds explicit `marketing` versus `all` suppression scope. SMS STOP
+uses `all`; email unsubscribe defaults to marketing-only unless the verified
+provider event explicitly reports a broader scope.
 
 ### PipelineEvent — covered by AuditLog + FunnelEvent, not a third table
 Status transitions are audit-logged generically via `AuditLog`

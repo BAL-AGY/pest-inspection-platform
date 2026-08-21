@@ -60,8 +60,14 @@ export async function cancelAppointmentAndNotify(appointmentId: string, companyI
         consent: {
           emailConsent: appointment.lead.emailConsent,
           smsConsent: appointment.lead.smsConsent,
+          smsMarketingConsent: appointment.lead.smsMarketingConsent,
+          emailMarketingConsent: appointment.lead.emailMarketingConsent,
+          smsOptedOutAt: appointment.lead.smsOptedOutAt,
+          emailOptedOutAt: appointment.lead.emailOptedOutAt,
           optedOutAt: appointment.lead.optedOutAt,
         },
+        purpose: "transactional",
+        dedupeKey: `appointment:${appointment.id}:cancelled:email`,
       },
     );
   }

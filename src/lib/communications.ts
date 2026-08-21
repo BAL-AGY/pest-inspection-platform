@@ -1,16 +1,8 @@
-/**
- * Communications provider abstraction. No live email/SMS vendor is wired
- * up (see docs/ARCHITECTURE.md) — the "dev" provider logs to console so the
- * send path is real and testable. Swapping in a live provider later means
- * implementing `CommunicationProvider` and changing `getProvider()`; call
- * sites never change.
- *
- * Every send goes through `canSend`, which enforces consent/opt-out state.
- * This is the one gate all confirmation/reminder/follow-up sends must pass
- * through — do not send around it.
- */
+import crypto from "crypto";
 
 export type MessageChannel = "email" | "sms";
+export type CommunicationPurpose = "transactional" | "marketing";
+export type CommunicationDirection = "outbound" | "inbound";
 
 export interface OutboundMessage {
   channel: MessageChannel;
@@ -22,70 +14,86 @@ export interface OutboundMessage {
 export interface ConsentState {
   emailConsent: boolean;
   smsConsent: boolean;
+  emailMarketingConsent?: boolean;
+  smsMarketingConsent?: boolean;
+  emailOptedOutAt?: Date | null;
+  smsOptedOutAt?: Date | null;
   optedOutAt: Date | null;
 }
 
 export interface SendResult {
-  sent: boolean;
+  accepted: boolean;
   reason?: string;
-  /**
-   * Set by a real provider once it accepts a message, to correlate a
-   * later delivery-status webhook. The dev provider never sets this — it
-   * has nothing real to report — see src/lib/communication-log.ts.
-   */
   providerMessageId?: string;
 }
 
-export function canSend(channel: MessageChannel, consent: ConsentState): SendResult {
-  if (consent.optedOutAt) {
-    return { sent: false, reason: "recipient has opted out" };
+export function canSend(
+  channel: MessageChannel,
+  purpose: CommunicationPurpose,
+  consent: ConsentState,
+): SendResult {
+  if (consent.optedOutAt) return { accepted: false, reason: "recipient has opted out" };
+  if (channel === "email" && consent.emailOptedOutAt) {
+    return { accepted: false, reason: "recipient opted out of email" };
+  }
+  if (channel === "sms" && consent.smsOptedOutAt) {
+    return { accepted: false, reason: "recipient opted out of SMS" };
   }
   if (channel === "email" && !consent.emailConsent) {
-    return { sent: false, reason: "no email consent on file" };
+    return { accepted: false, reason: `no email consent on file for ${purpose} communication` };
   }
   if (channel === "sms" && !consent.smsConsent) {
-    return { sent: false, reason: "no SMS consent on file" };
+    return { accepted: false, reason: `no SMS consent on file for ${purpose} communication` };
   }
-  return { sent: true };
+  if (purpose === "marketing" && channel === "email" && !consent.emailMarketingConsent) {
+    return { accepted: false, reason: "no email marketing consent on file" };
+  }
+  if (purpose === "marketing" && channel === "sms" && !consent.smsMarketingConsent) {
+    return { accepted: false, reason: "no SMS marketing consent on file" };
+  }
+  return { accepted: true };
+}
+
+export interface ProviderSendInput {
+  message: OutboundMessage;
+  idempotencyKey: string;
 }
 
 export interface CommunicationProvider {
-  send(message: OutboundMessage): Promise<SendResult>;
+  readonly name: string;
+  send(input: ProviderSendInput): Promise<SendResult>;
 }
 
-class ConsoleDevProvider implements CommunicationProvider {
-  async send(message: OutboundMessage): Promise<SendResult> {
-    console.log(
-      `[dev-communications] ${message.channel.toUpperCase()} -> ${message.to}${
-        message.subject ? ` | ${message.subject}` : ""
-      }\n${message.body}`,
-    );
-    return { sent: true };
+class DisabledProvider implements CommunicationProvider {
+  readonly name = "disabled";
+  async send(): Promise<SendResult> {
+    return { accepted: false, reason: "No live communication provider is configured" };
   }
 }
 
-let provider: CommunicationProvider = new ConsoleDevProvider();
+/** Non-network adapter for development/tests. It never logs recipient content. */
+export class DeterministicCommunicationProvider implements CommunicationProvider {
+  readonly name = "deterministic";
+  async send(input: ProviderSendInput): Promise<SendResult> {
+    return {
+      accepted: true,
+      providerMessageId: `det_${crypto.createHash("sha256").update(input.idempotencyKey).digest("hex").slice(0, 24)}`,
+    };
+  }
+}
+
+let providerOverride: CommunicationProvider | null = null;
 
 export function getProvider(): CommunicationProvider {
-  return provider;
+  if (providerOverride) return providerOverride;
+  return process.env.COMMUNICATION_PROVIDER === "deterministic" || process.env.NODE_ENV !== "production"
+    ? new DeterministicCommunicationProvider()
+    : new DisabledProvider();
 }
 
-/** Test/DI hook — never called from application code. */
-export function setProvider(p: CommunicationProvider) {
-  provider = p;
-}
-
-/**
- * Consent-gated send: checks `canSend` before invoking the provider so no
- * call site can accidentally bypass consent/opt-out state.
- */
-export async function sendIfConsented(
-  message: OutboundMessage,
-  consent: ConsentState,
-): Promise<SendResult> {
-  const gate = canSend(message.channel, consent);
-  if (!gate.sent) return gate;
-  return getProvider().send(message);
+/** Test-only dependency injection hook. */
+export function setProvider(provider: CommunicationProvider | null) {
+  providerOverride = provider;
 }
 
 export const MESSAGE_TEMPLATES = {
