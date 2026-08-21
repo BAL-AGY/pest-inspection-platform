@@ -465,8 +465,16 @@ export default function InspectionFunnelPage() {
         {stage === "scheduler" && (
           <div className="flex flex-col gap-4">
             <h2 className="text-2xl font-bold">Pick a time for your free inspection</h2>
-            {slotsError && <p className="text-red-600">{slotsError}</p>}
-            {bookingError && <p className="text-red-600">{bookingError}</p>}
+            {slotsError && (
+              <p role="alert" className="text-red-600">
+                {slotsError}
+              </p>
+            )}
+            {bookingError && (
+              <p role="alert" className="text-red-600">
+                {bookingError}
+              </p>
+            )}
             <div className="grid grid-cols-2 gap-2 max-h-96 overflow-y-auto">
               {slots.map((slot) => (
                 <button
