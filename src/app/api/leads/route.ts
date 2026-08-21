@@ -71,7 +71,7 @@ function rank(status: string) {
   return idx === -1 ? 0 : idx;
 }
 
-export async function POST(req: NextRequest) {
+async function saveLead(req: NextRequest) {
   const body = await req.json().catch(() => null);
   const parsed = upsertSchema.safeParse(body);
   if (!parsed.success) {
@@ -343,6 +343,22 @@ export async function POST(req: NextRequest) {
     inServiceArea: qualification.inServiceArea,
     supportedPest: qualification.supportedPest,
   });
+}
+
+export async function POST(req: NextRequest) {
+  try {
+    return await saveLead(req);
+  } catch {
+    // Dependency/configuration failures must still honor this JSON API's
+    // response contract. Do not expose database, Redis, or secret details.
+    return NextResponse.json(
+      {
+        error: "internal_error",
+        reason: "We couldn't save your information right now. Please try again shortly.",
+      },
+      { status: 500, headers: { "Cache-Control": "no-store" } },
+    );
+  }
 }
 
 export async function GET(req: NextRequest) {

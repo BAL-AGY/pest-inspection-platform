@@ -7,6 +7,7 @@ import {
   getNextQuestion,
 } from "@/lib/qualification";
 import type { QualificationAnswers } from "@/lib/scoring";
+import { homeownerApiError, readJsonObject } from "@/lib/http-response";
 import {
   attributionFromLocation,
   getOrCreateVisitorId,
@@ -49,6 +50,7 @@ export default function InspectionFunnelPage() {
   const [selectedSlot, setSelectedSlot] = useState<string | null>(null);
   const [bookingError, setBookingError] = useState<string | null>(null);
   const [confirmedWhen, setConfirmedWhen] = useState<string | null>(null);
+  const [funnelError, setFunnelError] = useState<string | null>(null);
 
   useEffect(() => {
     track("assessment_start");
@@ -57,6 +59,7 @@ export default function InspectionFunnelPage() {
   const question = useMemo(() => getNextQuestion(answers), [answers]);
 
   async function saveAnswers(next: QualificationAnswers) {
+    setFunnelError(null);
     setSubmitting(true);
     try {
       const res = await fetch("/api/leads", {
@@ -70,21 +73,36 @@ export default function InspectionFunnelPage() {
           attribution: attributionFromLocation(),
         }),
       });
-      const data = await res.json();
-      if (data.lead?.id) {
-        setLead({
-          id: data.lead.id,
-          token: data.leadToken,
-          classification: data.lead.classification,
-          inServiceArea: data.inServiceArea,
-          eligibleForBooking: data.eligibleForBooking,
-        });
-        storeLeadId(data.lead.id);
-        storeLeadToken(data.leadToken);
+      const data = await readJsonObject(res);
+      if (!res.ok || !data) {
+        setFunnelError(homeownerApiError(res, data));
+        return;
       }
-      if (res.ok && data.qualificationComplete) {
+      const returnedLead = data.lead;
+      if (returnedLead && typeof returnedLead === "object" && "id" in returnedLead && typeof returnedLead.id === "string") {
+        const leadToken = typeof data.leadToken === "string" ? data.leadToken : null;
+        const returnedClassification = "classification" in returnedLead
+          ? returnedLead.classification
+          : "prospect";
+        const classification = returnedClassification === "mql" || returnedClassification === "sql"
+          ? returnedClassification
+          : "prospect";
+        setLead({
+          id: returnedLead.id,
+          token: leadToken,
+          classification,
+          inServiceArea: data.inServiceArea as boolean | null,
+          eligibleForBooking: data.eligibleForBooking === true,
+        });
+        storeLeadId(returnedLead.id);
+        if (leadToken) storeLeadToken(leadToken);
+      }
+      setAnswers(next);
+      if (data.qualificationComplete) {
         setStage("contact");
       }
+    } catch {
+      setFunnelError("We couldn't connect right now. Please check your connection and try again.");
     } finally {
       setSubmitting(false);
     }
@@ -92,12 +110,12 @@ export default function InspectionFunnelPage() {
 
   function answer(id: string, value: string | boolean) {
     const next = { ...answers, [id]: value };
-    setAnswers(next);
     void saveAnswers(next);
   }
 
   async function submitContact(e: React.FormEvent) {
     e.preventDefault();
+    setFunnelError(null);
     setSubmitting(true);
     try {
       const res = await fetch("/api/leads", {
@@ -115,26 +133,37 @@ export default function InspectionFunnelPage() {
           attribution: attributionFromLocation(),
         }),
       });
-      const data = await res.json();
-      const classification = data.lead?.classification as LeadState["classification"];
+      const data = await readJsonObject(res);
+      if (!res.ok || !data || !data.lead || typeof data.lead !== "object") {
+        setFunnelError(homeownerApiError(res, data));
+        return;
+      }
+      const returnedLead = data.lead as Record<string, unknown>;
+      if (typeof returnedLead.id !== "string") {
+        setFunnelError("We received an unexpected response. Please try again.");
+        return;
+      }
+      const classification = returnedLead.classification as LeadState["classification"];
       const inServiceArea = data.inServiceArea as boolean | null;
       const eligibleForBooking = data.eligibleForBooking === true;
       setLead({
-        id: data.lead.id,
-        token: data.leadToken,
+        id: returnedLead.id,
+        token: typeof data.leadToken === "string" ? data.leadToken : null,
         classification,
         inServiceArea,
         eligibleForBooking,
       });
-      storeLeadId(data.lead.id);
-      storeLeadToken(data.leadToken);
+      storeLeadId(returnedLead.id);
+      if (typeof data.leadToken === "string") storeLeadToken(data.leadToken);
 
       if (eligibleForBooking) {
         setStage("scheduler");
-        await loadSlots(data.lead.id, data.leadToken);
+        await loadSlots(returnedLead.id, typeof data.leadToken === "string" ? data.leadToken : null);
       } else {
         setStage("not-eligible");
       }
+    } catch {
+      setFunnelError("We couldn't connect right now. Please check your connection and try again.");
     } finally {
       setSubmitting(false);
     }
@@ -145,13 +174,13 @@ export default function InspectionFunnelPage() {
     const res = await fetch(`/api/availability?leadId=${leadId}`, {
       headers: leadToken ? { "X-Funnel-Token": leadToken } : {},
     });
-    const data = await res.json();
-    if (!res.ok) {
-      setSlotsError(data.reason ?? "No availability right now.");
+    const data = await readJsonObject(res);
+    if (!res.ok || !data) {
+      setSlotsError(homeownerApiError(res, data));
       return;
     }
-    setSlots(data.slots);
-    setCompanyTimeZone(data.timeZone ?? null);
+    setSlots(Array.isArray(data.slots) ? data.slots as { start: string; end: string }[] : []);
+    setCompanyTimeZone(typeof data.timeZone === "string" ? data.timeZone : null);
   }
 
   async function bookSlot() {
@@ -166,14 +195,18 @@ export default function InspectionFunnelPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ leadId: lead.id, leadToken: lead.token, start: slot.start, end: slot.end }),
       });
-      const data = await res.json();
-      if (!res.ok) {
-        setBookingError(data.reason ?? "That time is no longer available. Please pick another.");
+      const data = await readJsonObject(res);
+      if (!res.ok || !data) {
+        setBookingError(homeownerApiError(res, data));
         await loadSlots(lead.id, lead.token);
         return;
       }
+      if (!data.appointment || typeof data.appointment !== "object" || !("scheduledStart" in data.appointment)) {
+        setBookingError("We received an unexpected response. Please try another time.");
+        return;
+      }
       setConfirmedWhen(
-        new Date(data.appointment.scheduledStart).toLocaleString("en-US", {
+        new Date(String(data.appointment.scheduledStart)).toLocaleString("en-US", {
           weekday: "long",
           month: "long",
           day: "numeric",
@@ -183,6 +216,8 @@ export default function InspectionFunnelPage() {
         }),
       );
       setStage("confirmed");
+    } catch {
+      setBookingError("We couldn't connect right now. Please check your connection and try again.");
     } finally {
       setSubmitting(false);
     }
@@ -205,6 +240,11 @@ export default function InspectionFunnelPage() {
       </div>
 
       <div className="flex-1 flex flex-col justify-center px-6 py-12 max-w-xl mx-auto w-full gap-6">
+        {funnelError && (
+          <p role="alert" className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-red-700">
+            {funnelError}
+          </p>
+        )}
         {stage === "questions" && question && (
           <QuestionCard
             key={question.id}
