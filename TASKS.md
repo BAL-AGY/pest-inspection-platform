@@ -170,6 +170,27 @@ before this audit.
       accepting `leadId`/`visitorId`/`companyId`/a token found no further
       instance of this bypass pattern. See `docs/GOAL_AUDIT.md` and
       `docs/ARCHITECTURE.md` for full detail.
+- [x] **(fixed 2026-08-21 — autonomous session)** Refresh mid-funnel
+      restores in-progress qualification/contact state instead of
+      discarding it and silently starting a second `Lead` row. Reads the
+      already-persisted `leadId`/`leadToken` (`src/lib/visitor.ts`) back on
+      mount and issues a no-op resume call to `/api/leads`, authenticated
+      by the same token check Step 17 already requires — no new
+      visitorId-based lookup added. See `e2e/funnel-resume.spec.ts` and
+      `docs/GOAL_AUDIT.md` Critical Path item 20.
+- [ ] **(found, NOT fixed — autonomous session, needs its own adversarial
+      review before implementation)** Duplicate-lead race: two concurrent
+      `POST /api/leads` calls with no `leadId` (same `visitorId`) create
+      two separate `Lead` rows instead of one — confirmed via a direct
+      probe. No cross-visitor security impact (each caller only gets a
+      token for the lead it created), but real duplicate-row data-hygiene
+      impact under scripted/bot concurrent submission or network retries;
+      normal UI usage is already protected by `disabled={submitting}`.
+      Deliberately not fixed this session — the natural fix (briefly
+      reusing `visitorId` to collapse concurrent creates) is structurally
+      close to the exact pattern Step 17 closed as a hijack vector, and
+      this code path has already had two rounds of adversarial review.
+      See `docs/GOAL_AUDIT.md` Critical Path item 21 for full detail.
 - [x] **(fixed — Step 21)** Production credential and seed hardening.
       `src/lib/environment.ts` centrally requires strong, independent
       `AUTH_SECRET`, `FUNNEL_CAPABILITY_SECRET`, and

@@ -43,6 +43,41 @@ lifetime (implemented: 4-hour TTL; localStorage/XSS transport limitation
 explicitly documented, not silently accepted — see ARCHITECTURE.md Known
 gaps item 12).
 
+**2026-08-21 addendum (autonomous session — duplicate-lead race, found,
+NOT fixed).** While verifying the P3 "duplicate submission" reliability
+item, I wrote a dedicated probe (two concurrent `POST /api/leads` calls,
+same `visitorId`, both omitting `leadId`) and confirmed it creates two
+separate `Lead` rows rather than one. This is a direct, expected
+consequence of the Step 17 fix: that fix deliberately made "no leadId
+supplied" always create a new lead and never look up an existing one by
+`visitorId` alone, specifically to close the IDOR where an attacker could
+hijack a victim's lead by supplying their `visitorId`. The duplicate-row
+race is real but **lower severity than an ownership bypass**: each
+concurrent request only ever receives a capability token for the lead
+*it* created, so no cross-visitor data exposure occurs — the impact is
+data hygiene (a legitimate visitor who double-submits before the first
+response returns and disables the UI, or any automated retry, gets two
+`Lead` rows instead of one), not unauthorized access. In normal UI usage
+this is already mitigated by `disabled={submitting}` on every funnel
+button, which prevents a real double-click from firing twice; the gap
+only manifests via direct concurrent API calls (scripted/bot traffic) or
+network-level retries.
+
+I deliberately did **not** attempt a fix in this session. Any fix touches
+the exact `POST /api/leads` "no leadId ⇒ create" branch that has already
+been through two rounds of independent adversarial security review
+(Steps 15 and 17), and the most obvious fix shape — briefly reusing
+`visitorId` as a lookup key to collapse concurrent creates into one lead
+— is structurally the same pattern that was just closed as a hijack
+vector, just with a shorter window. Getting the scoping subtly wrong here
+(e.g., a lock/lookback window that outlives the true race, or that
+doesn't verify the second caller is the same origin/session) could
+reopen a variant of the exact vulnerability Step 17 closed. This needs
+its own scoped design + adversarial review before implementation, the
+same way Steps 15 and 17 were handled, not a same-session patch. Tracked
+as a Critical Path item below (P2, not P0/P1 — no security impact, real
+but narrow data-quality impact only).
+
 ## Method — what was actually run, not just read
 
 Every status below is backed by either (a) reading the real code and schema,
@@ -399,3 +434,27 @@ work today; items 7+ build toward a safe production launch.
     one-time/quarterly/bi-monthly arrangement, and actual contract value.
     Category analytics use tenant/demo-scoped server events. Potential ranges
     are never emitted as revenue or shown to homeowners.
+20. **Restore in-progress funnel state on page refresh.** ~~DONE
+    (2026-08-21, autonomous session).~~ A refresh mid-qualification
+    previously discarded all answers and, on the next answer, silently
+    started a second `Lead` row — a side effect of the Step 17 fix removing
+    the old implicit "resume by visitorId" behavior. Now restores answers/
+    contact/lead state on mount via a no-op resume call authenticated by the
+    same `leadId`+`leadToken` pair Step 17 already requires (no new
+    visitorId-based lookup introduced). See `e2e/funnel-resume.spec.ts`.
+21. **Duplicate-lead race on concurrent first-answer submission — found,
+    NOT fixed, needs its own adversarial review.** Two concurrent
+    `POST /api/leads` calls with no `leadId` (same `visitorId`) create two
+    separate `Lead` rows instead of one, confirmed by a direct probe.
+    Expected consequence of the Step 17 fix (see the 2026-08-21 addendum
+    above for full detail). No cross-visitor security impact — each caller
+    only gets a token for the lead it created — but real data-hygiene
+    impact (duplicate rows) under scripted/bot concurrent submission or
+    network retries; normal UI usage is already protected by
+    `disabled={submitting}`. Deliberately not fixed this session: the
+    natural fix shape (briefly reusing `visitorId` to collapse concurrent
+    creates) is structurally close to the exact pattern Step 17 closed as a
+    hijack vector, and this exact code path has already had two rounds of
+    adversarial review — a third same-session, unreviewed change to it is
+    a bigger risk than the bug itself. P2: real but narrow, no security
+    impact.
