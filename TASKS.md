@@ -19,6 +19,14 @@ appointment ownership before writes. Full verification: 136/136 Vitest and
 37/37 Playwright tests, typecheck, lint, PostgreSQL/Redis coverage, and
 production build.
 
+**Demo economics and attribution:** Dashboard metrics now include combined
+qualified leads, lead-to-qualified and qualified-to-booked conversion, cost per
+qualified lead, attendance-outcome show rate, close rate, CAC, ROAS, ROI, and a
+source/campaign table covering leads → qualified → booked → won → attributed
+contract value. Counts are unique by Lead where appropriate, so repeated events
+or appointments do not inflate source performance. The landing CTA preserves
+UTMs, and tracking associates a `leadId` only when its company/visitor match.
+
 **2026-08-20 full-goal audit**: `npm run test` (51/51), `npx tsc --noEmit`
 (0 errors), `npm run lint` (0 errors), `npm run build` (succeeds, all 19
 routes), and `npx playwright test` (1/1, live) were all re-run fresh as
@@ -323,6 +331,11 @@ before this audit.
 - [x] Customer acquisition cost, return on ad spend (both null until real
       spend + outcome data exist)
 - [x] Marketing spend entry UI (`/dashboard/marketing`)
+- [x] Demo economics dashboard: lead→qualified and qualified→booked conversion,
+      outcome-based show rate, inspection→customer close rate, cost per
+      qualified lead, CAC, attributed contract value, ROAS, and ROI
+- [x] Source/campaign performance UI with unique-Lead counts through qualified,
+      booked, won, and contract-value stages
 
 ## 13. Communications
 

@@ -19,15 +19,26 @@ export default async function MarketingPage() {
     const periodStart = String(formData.get("periodStart"));
     const periodEnd = String(formData.get("periodEnd"));
     const amount = Number(formData.get("amount"));
-    if (!source || !periodStart || !periodEnd || Number.isNaN(amount)) return;
+    const start = new Date(periodStart);
+    const end = new Date(periodEnd);
+    if (
+      !source ||
+      source.length > 100 ||
+      campaign.length > 200 ||
+      !Number.isFinite(start.getTime()) ||
+      !Number.isFinite(end.getTime()) ||
+      start > end ||
+      !Number.isFinite(amount) ||
+      amount <= 0
+    ) return;
 
     await prisma.marketingSpend.create({
       data: {
         companyId: session!.companyId,
         source,
         campaign: campaign || null,
-        periodStart: new Date(periodStart),
-        periodEnd: new Date(periodEnd),
+        periodStart: start,
+        periodEnd: end,
         amountCents: Math.round(amount * 100),
       },
     });
@@ -56,7 +67,7 @@ export default async function MarketingPage() {
         </label>
         <label className="text-xs text-zinc-500 flex flex-col gap-1 col-span-2">
           Amount ($)
-          <input name="amount" type="number" step="0.01" required className="border border-zinc-300 rounded px-3 py-2 text-sm" />
+          <input name="amount" type="number" min="0.01" step="0.01" required className="border border-zinc-300 rounded px-3 py-2 text-sm" />
         </label>
         <button className="col-span-2 rounded bg-emerald-700 text-white px-4 py-2 text-sm font-semibold">
           Add spend entry

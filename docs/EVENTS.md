@@ -96,6 +96,10 @@ The landing CTA preserves its incoming query string when navigating to the
 inspection funnel, so UTM/click parameters captured on the landing visit are
 also present when the Lead is created. The full browser journey asserts that
 the resulting source and campaign appear on the exact owner-facing lead.
+`POST /api/track` treats a browser-supplied `leadId` as an association hint,
+not proof: it attaches the event only when that Lead belongs to the active
+company and the same stored visitor. Stale or cross-visitor IDs remain anonymous
+events, preventing foreign-key failures and cross-homeowner timeline pollution.
 
 Only `visit` and `assessment_start` carry attribution resolved fresh at
 the moment of the event. Every other event either copies the lead's

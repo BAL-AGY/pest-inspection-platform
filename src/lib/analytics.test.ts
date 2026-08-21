@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   computeCac,
+  computeAttributionBreakdown,
   computeCloseRate,
+  computeConversionRate,
   computeCostMetrics,
   computeFunnelCounts,
   computeReturnOnSpend,
+  computeRoi,
   computeShowRate,
   computeStageConversionRates,
 } from "./analytics";
@@ -20,6 +23,39 @@ describe("computeFunnelCounts", () => {
     expect(counts.visit).toBe(2);
     expect(counts.lead_created).toBe(1);
     expect(counts.sql).toBe(0);
+  });
+});
+
+describe("computeAttributionBreakdown", () => {
+  it("counts each lead once even when its appointment existence is already summarized", () => {
+    const rows = computeAttributionBreakdown([
+      {
+        source: "google",
+        campaign: "termite-search",
+        classification: "sql",
+        outcome: "won",
+        contractValueCents: 45_000,
+        hasAppointment: true,
+      },
+      {
+        source: "google",
+        campaign: "termite-search",
+        classification: "prospect",
+        outcome: null,
+        contractValueCents: null,
+        hasAppointment: false,
+      },
+    ]);
+
+    expect(rows).toEqual([{
+      source: "google",
+      campaign: "termite-search",
+      leads: 2,
+      qualified: 1,
+      booked: 1,
+      won: 1,
+      contractValueCents: 45_000,
+    }]);
   });
 });
 
@@ -50,6 +86,7 @@ describe("computeCostMetrics", () => {
     const metrics = computeCostMetrics({
       spendCents: null,
       leadsCount: 10,
+      qualifiedCount: 6,
       mqlCount: 5,
       sqlCount: 2,
       bookedCount: 2,
@@ -62,12 +99,14 @@ describe("computeCostMetrics", () => {
     const metrics = computeCostMetrics({
       spendCents: 100_00,
       leadsCount: 10,
+      qualifiedCount: 5,
       mqlCount: 5,
       sqlCount: 2,
       bookedCount: 2,
       completedCount: 1,
     });
     expect(metrics.costPerLeadCents).toBe(1000);
+    expect(metrics.costPerQualifiedLeadCents).toBe(2000);
     expect(metrics.costPerBookedInspectionCents).toBe(5000);
     expect(metrics.costPerCompletedInspectionCents).toBe(10000);
   });
@@ -76,6 +115,7 @@ describe("computeCostMetrics", () => {
     const metrics = computeCostMetrics({
       spendCents: 100_00,
       leadsCount: 0,
+      qualifiedCount: 0,
       mqlCount: 0,
       sqlCount: 0,
       bookedCount: 0,
@@ -104,6 +144,12 @@ describe("computeCac / computeReturnOnSpend", () => {
   it("computes ROAS correctly", () => {
     expect(computeReturnOnSpend(400, 100)).toBe(4);
   });
+
+  it("computes ROI and leaves it unknown without spend/revenue", () => {
+    expect(computeRoi(450_00, 100_00)).toBe(3.5);
+    expect(computeRoi(null, 100_00)).toBeNull();
+    expect(computeRoi(450_00, 0)).toBeNull();
+  });
 });
 
 describe("computeShowRate / computeCloseRate", () => {
@@ -115,5 +161,10 @@ describe("computeShowRate / computeCloseRate", () => {
   it("computes rates correctly", () => {
     expect(computeShowRate(3, 4)).toBe(0.75);
     expect(computeCloseRate(1, 4)).toBe(0.25);
+  });
+
+  it("computes explicit funnel conversion rates", () => {
+    expect(computeConversionRate(6, 10)).toBe(0.6);
+    expect(computeConversionRate(0, 0)).toBeNull();
   });
 });

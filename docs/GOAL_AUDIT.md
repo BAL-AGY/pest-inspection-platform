@@ -1,5 +1,15 @@
 # Goal Audit — Full Repository vs. Master /goal
 
+## 2026-08-21 demo-readiness update
+
+The real Playwright journey now verifies homeowner qualification/booking,
+owner-visible readable qualification and UTM attribution, calendar linkage,
+notes, completion, customer outcome, marketing spend, conversion economics,
+and source/campaign performance. Analytics now distinguishes qualified leads,
+unique qualified booked leads, observed show outcomes, completed-inspection
+close rate, CAC, ROAS, and ROI. This is demo-ready local behavior, not a claim
+of production performance; live provider/deployment work remains open.
+
 Date: 2026-08-20. Performed against `main` (single commit `30529b7 Initial
 project setup`, plus uncommitted `TASKS.md`/`docs/ARCHITECTURE.md` edits and
 new `docs/DATA_MODEL.md`/`docs/EVENTS.md`/`docs/STATES.md` from the prior

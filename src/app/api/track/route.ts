@@ -50,11 +50,21 @@ export async function POST(req: NextRequest) {
       })()
     : null;
   const attribution = resolveAttribution(parsedAttr, referrerHost);
+  // Client storage can outlive a deleted/reset Lead and is not proof of
+  // ownership. Associate only when the id still belongs to this visitor and
+  // company; otherwise retain a valid anonymous event instead of throwing a
+  // foreign-key error or attaching activity to another homeowner.
+  const associatedLead = leadId
+    ? await prisma.lead.findFirst({
+        where: { id: leadId, companyId: company.id, visitorId },
+        select: { id: true },
+      })
+    : null;
 
   const event = await prisma.funnelEvent.create({
     data: {
       companyId: company.id,
-      leadId: leadId ?? null,
+      leadId: associatedLead?.id ?? null,
       visitorId,
       eventType,
       source: attribution.source,

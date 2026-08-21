@@ -180,4 +180,13 @@ test("real prospect moves through the full acquisition-to-outcome journey", asyn
   // exist — both are true after this run).
   await page.goto("/dashboard");
   await expect(page.getByText("Cost per booked inspection").locator("..")).toContainText(/\$\d/);
+  await expect(page.getByText("Cost per qualified lead").locator("..")).toContainText(/\$\d/);
+  await expect(page.getByText("Lead to qualified").locator("..")).toContainText(/%/);
+  await expect(page.getByText("Qualified to booked").locator("..")).toContainText(/%/);
+  await expect(page.getByText("Show rate").locator("..")).toContainText(/%/);
+  await expect(page.getByText("Close rate").locator("..")).toContainText(/%/);
+  await expect(page.getByText("ROI", { exact: true }).locator("..")).toContainText(/%/);
+  const attributedCampaignRow = page.getByRole("row", { name: /google \/ e2e_playwright/i });
+  await expect(attributedCampaignRow).toBeVisible();
+  await expect(attributedCampaignRow).toContainText(/\$450\.00|\$\d/);
 });

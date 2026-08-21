@@ -12,13 +12,6 @@ export const LEAD_STATUSES = [
   "inspection_completed",
   "customer_won",
   "customer_lost",
-  "communication_attempted",
-  "communication_accepted",
-  "communication_delivered",
-  "communication_failed",
-  "communication_bounced",
-  "communication_inbound",
-  "communication_opted_out",
 ] as const;
 export type LeadStatus = (typeof LEAD_STATUSES)[number];
 
@@ -46,6 +39,13 @@ export const FUNNEL_EVENT_TYPES = [
   "appointment_completed",
   "customer_won",
   "customer_lost",
+  "communication_attempted",
+  "communication_accepted",
+  "communication_delivered",
+  "communication_failed",
+  "communication_bounced",
+  "communication_inbound",
+  "communication_opted_out",
 ] as const;
 export type FunnelEventType = (typeof FUNNEL_EVENT_TYPES)[number];
 

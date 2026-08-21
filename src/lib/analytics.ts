@@ -79,12 +79,13 @@ export function computeStageConversionRates(
 export function computeCostMetrics(params: {
   spendCents: number | null;
   leadsCount: number;
+  qualifiedCount: number;
   mqlCount: number;
   sqlCount: number;
   bookedCount: number;
   completedCount: number;
 }) {
-  const { spendCents, leadsCount, mqlCount, sqlCount, bookedCount, completedCount } =
+  const { spendCents, leadsCount, qualifiedCount, mqlCount, sqlCount, bookedCount, completedCount } =
     params;
 
   const per = (count: number) =>
@@ -92,6 +93,7 @@ export function computeCostMetrics(params: {
 
   return {
     costPerLeadCents: per(leadsCount),
+    costPerQualifiedLeadCents: per(qualifiedCount),
     costPerMqlCents: per(mqlCount),
     costPerSqlCents: per(sqlCount),
     costPerBookedInspectionCents: per(bookedCount),
@@ -115,6 +117,67 @@ export function computeReturnOnSpend(
 ) {
   if (revenueCents === null || spendCents === null || spendCents <= 0) return null;
   return revenueCents / spendCents;
+}
+
+export function computeRoi(
+  revenueCents: number | null,
+  spendCents: number | null,
+): number | null {
+  if (revenueCents === null || spendCents === null || spendCents <= 0) return null;
+  return (revenueCents - spendCents) / spendCents;
+}
+
+export function computeConversionRate(numerator: number, denominator: number): number | null {
+  if (denominator <= 0) return null;
+  return numerator / denominator;
+}
+
+export interface AttributionLead {
+  source: string | null;
+  campaign: string | null;
+  classification: string;
+  outcome: string | null;
+  contractValueCents: number | null;
+  hasAppointment: boolean;
+}
+
+export function computeAttributionBreakdown(leads: AttributionLead[]) {
+  const groups = new Map<string, {
+    source: string;
+    campaign: string;
+    leads: number;
+    qualified: number;
+    booked: number;
+    won: number;
+    contractValueCents: number;
+  }>();
+
+  for (const lead of leads) {
+    const source = lead.source ?? "direct";
+    const campaign = lead.campaign ?? "Unspecified";
+    const key = `${source.length}:${source}|${campaign}`;
+    const group = groups.get(key) ?? {
+      source,
+      campaign,
+      leads: 0,
+      qualified: 0,
+      booked: 0,
+      won: 0,
+      contractValueCents: 0,
+    };
+    group.leads += 1;
+    if (lead.classification === "mql" || lead.classification === "sql") group.qualified += 1;
+    if (lead.hasAppointment) group.booked += 1;
+    if (lead.outcome === "won") {
+      group.won += 1;
+      group.contractValueCents += lead.contractValueCents ?? 0;
+    }
+    groups.set(key, group);
+  }
+
+  return Array.from(groups.values()).sort((left, right) =>
+    right.booked - left.booked || right.leads - left.leads || left.source.localeCompare(right.source),
+  );
 }
 
 export function computeShowRate(

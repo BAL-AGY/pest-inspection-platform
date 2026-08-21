@@ -53,6 +53,9 @@ export default async function DashboardOverviewPage() {
           <Stat label="MQLs" value={m.mqlCount} />
           <Stat label="SQLs" value={m.sqlCount} />
           <Stat label="Booked inspections" value={m.bookedCount} />
+          <Stat label="Qualified leads" value={m.qualifiedCount} />
+          <Stat label="Lead to qualified" value={fmtPct(m.leadToQualifiedRate)} />
+          <Stat label="Qualified to booked" value={fmtPct(m.qualifiedToBookedRate)} />
         </div>
       </section>
 
@@ -73,6 +76,7 @@ export default async function DashboardOverviewPage() {
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           <Stat label="Marketing spend" value={fmtCents(m.marketingSpendCents)} />
           <Stat label="Cost per lead" value={fmtCents(m.costMetrics.costPerLeadCents)} />
+          <Stat label="Cost per qualified lead" value={fmtCents(m.costMetrics.costPerQualifiedLeadCents)} />
           <Stat label="Cost per SQL" value={fmtCents(m.costMetrics.costPerSqlCents)} />
           <Stat
             label="Cost per booked inspection"
@@ -80,12 +84,48 @@ export default async function DashboardOverviewPage() {
           />
           <Stat label="Customer acquisition cost" value={fmtCents(m.cac)} />
           <Stat label="Return on ad spend" value={m.roas === null ? "No data yet" : `${m.roas.toFixed(2)}x`} />
+          <Stat label="ROI" value={fmtPct(m.roi)} />
         </div>
         {m.marketingSpendCents === null && (
           <p className="text-sm text-zinc-500 mt-2">
             Enter marketing spend under Marketing to see real cost-per-lead figures.
           </p>
         )}
+      </section>
+
+      <section>
+        <h2 className="text-sm font-semibold text-zinc-500 uppercase mb-3">
+          Source and campaign performance
+        </h2>
+        <div className="overflow-x-auto bg-white border border-zinc-200 rounded-lg">
+          <table className="w-full text-sm">
+            <thead className="text-left text-zinc-500 border-b border-zinc-200">
+              <tr>
+                <th className="px-4 py-3">Source / campaign</th>
+                <th className="px-3 py-3">Leads</th>
+                <th className="px-3 py-3">Qualified</th>
+                <th className="px-3 py-3">Booked</th>
+                <th className="px-3 py-3">Won</th>
+                <th className="px-4 py-3">Contract value</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-zinc-100">
+              {m.attributionBreakdown.map((row) => (
+                <tr key={`${row.source}:${row.campaign}`}>
+                  <td className="px-4 py-3 font-medium">{row.source} / {row.campaign}</td>
+                  <td className="px-3 py-3">{row.leads}</td>
+                  <td className="px-3 py-3">{row.qualified}</td>
+                  <td className="px-3 py-3">{row.booked}</td>
+                  <td className="px-3 py-3">{row.won}</td>
+                  <td className="px-4 py-3">{fmtCents(row.contractValueCents)}</td>
+                </tr>
+              ))}
+              {m.attributionBreakdown.length === 0 && (
+                <tr><td className="px-4 py-4 text-zinc-500" colSpan={6}>No attributed leads yet.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
       </section>
 
       <section>
