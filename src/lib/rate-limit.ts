@@ -1,6 +1,7 @@
 import crypto from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { assertProductionEnvironment } from "./environment";
+import { RedisRateLimitStore } from "./redis-rate-limit";
 
 export const RATE_LIMIT_POLICIES = {
   leadCreate: { limit: 6, windowMs: 60 * 60_000, globalLimit: 300 },
@@ -26,7 +27,7 @@ export interface RateLimitStoreResult {
   resetAt: number;
 }
 
-/** Storage boundary for a future Redis/managed shared implementation. */
+/** Storage boundary shared by the local in-memory and production Redis stores. */
 export interface RateLimitStore {
   consume(input: RateLimitStoreInput): Promise<RateLimitStoreResult>;
 }
@@ -69,7 +70,8 @@ export class InMemoryRateLimitStore implements RateLimitStore {
 }
 
 const memoryStore = new InMemoryRateLimitStore();
-let activeStore: RateLimitStore = memoryStore;
+let activeStore: RateLimitStore | null = null;
+let configuredRedisStore: { url: string; store: RedisRateLimitStore } | null = null;
 const processSalt = crypto.randomBytes(32);
 
 export function setRateLimitStore(store: RateLimitStore) {
@@ -79,6 +81,15 @@ export function setRateLimitStore(store: RateLimitStore) {
 export function resetRateLimitStore() {
   memoryStore.clear();
   activeStore = memoryStore;
+}
+
+function defaultRateLimitStore(): RateLimitStore {
+  const redisUrl = process.env.REDIS_URL?.trim();
+  if (!redisUrl) return memoryStore;
+  if (!configuredRedisStore || configuredRedisStore.url !== redisUrl) {
+    configuredRedisStore = { url: redisUrl, store: new RedisRateLimitStore(redisUrl) };
+  }
+  return configuredRedisStore.store;
 }
 
 function identifierSecret(): crypto.BinaryLike {
@@ -123,12 +134,15 @@ export interface EnforceRateLimitInput {
   companyScope: string;
   identifiers: RateLimitIdentifier[];
   now?: number;
+  /** Explicit injection point used by tests and independently configured instances. */
+  store?: RateLimitStore;
 }
 
 export interface RateLimitDecision {
   allowed: boolean;
   retryAfterSeconds: number;
   remaining: number;
+  backendUnavailable?: boolean;
 }
 
 export async function enforceRateLimit(input: EnforceRateLimitInput): Promise<RateLimitDecision> {
@@ -158,11 +172,22 @@ export async function enforceRateLimit(input: EnforceRateLimitInput): Promise<Ra
     },
   ];
 
-  const results = await Promise.all(
-    buckets.map((bucket) =>
-      activeStore.consume({ key: bucket.key, limit: bucket.limit, windowMs: policy.windowMs, now }),
-    ),
-  );
+  let results: RateLimitStoreResult[];
+  try {
+    const store = input.store ?? activeStore ?? defaultRateLimitStore();
+    results = await Promise.all(
+      buckets.map((bucket) =>
+        store.consume({ key: bucket.key, limit: bucket.limit, windowMs: policy.windowMs, now }),
+      ),
+    );
+  } catch {
+    return {
+      allowed: false,
+      retryAfterSeconds: 30,
+      remaining: 0,
+      backendUnavailable: true,
+    };
+  }
   const denied = results.filter((result) => !result.allowed);
   const resetAt = Math.max(...(denied.length > 0 ? denied : results).map((result) => result.resetAt));
 
@@ -174,6 +199,18 @@ export async function enforceRateLimit(input: EnforceRateLimitInput): Promise<Ra
 }
 
 export function rateLimitResponse(decision: RateLimitDecision) {
+  if (decision.backendUnavailable) {
+    return NextResponse.json(
+      { error: "rate_limit_unavailable", reason: "Request protection is temporarily unavailable." },
+      {
+        status: 503,
+        headers: {
+          "Retry-After": String(decision.retryAfterSeconds),
+          "Cache-Control": "no-store",
+        },
+      },
+    );
+  }
   return NextResponse.json(
     { error: "rate_limited", reason: "Too many requests. Please try again later." },
     {

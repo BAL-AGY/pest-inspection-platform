@@ -39,7 +39,7 @@ not maintain their own counters.
 | Booking attempts | 12 | 15 minutes | verified lead + trusted network |
 | Auth POST actions | 10 | 15 minutes | normalized account/CSRF session + trusted network |
 
-Each policy also has a higher per-process emergency ceiling so rotating
+Each policy also has a higher shared emergency ceiling so rotating
 visitor identifiers cannot create an entirely unbounded request stream on a
 single instance. Booking remains protected independently by database
 transactions and the partial unique active-slot index.
@@ -57,23 +57,28 @@ trusted proxy chain overwrites/appends `X-Forwarded-For` predictably. If it is
 unset or invalid, visitor/lead/account and emergency-global buckets still
 apply, but network-level isolation does not.
 
-## `429` behavior
+## `429` and backend-failure behavior
 
 Limited requests return HTTP 429, JSON `error: "rate_limited"`, a whole-second
 `Retry-After`, and `Cache-Control: no-store`. Checks run before state-changing
 database operations. Capability-bound limits run after capability verification
 so a leaked lead ID cannot be used to exhaust the homeowner's bucket.
 
-## Backing store and production limitation
+If Redis cannot atomically enforce a request, protected routes fail closed
+with HTTP 503, `error: "rate_limit_unavailable"`, `Retry-After: 30`, and
+`Cache-Control: no-store`. They do not fall back to an instance-local counter
+or proceed unlimited. The response does not reveal connection details.
 
-The current provider is `InMemoryRateLimitStore`. It is useful for local
-development, tests, and one Node process, but it is **not a multi-instance
-production control**: counters reset on restart and are not shared across
-replicas, regions, or serverless invocations.
+## Backing store and production operation
 
-`RateLimitStore.consume()` is the provider boundary for Redis or a managed
-atomic counter. A distributed provider must atomically increment with expiry,
-use one stable `RATE_LIMIT_IDENTIFIER_SECRET`, be monitored, and preserve the
-existing route-policy and 429 contract. Until that provider or an equivalent
-trusted edge/WAF control is deployed, distributed abuse protection remains a
-production scaling limitation.
+Production requires `REDIS_URL` and uses `RedisRateLimitStore`. A Lua script
+atomically increments each fixed-window bucket, applies expiry on first use,
+and returns a reset instant derived from Redis server time. All application
+instances therefore share counters without relying on process clocks. Keys
+contain only an HMAC digest and a non-sensitive namespace prefix.
+
+`InMemoryRateLimitStore` remains a development/test fallback only when
+`REDIS_URL` is absent. Redis availability, latency, memory/eviction policy,
+persistence, TLS/authentication, and regional topology remain deployment
+responsibilities. The fixed-window policy is intentionally conservative near
+window boundaries; rate limiting never replaces database booking constraints.

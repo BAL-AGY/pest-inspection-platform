@@ -4,6 +4,7 @@ describe("instrumentation register()", () => {
   const originalAuthSecret = process.env.AUTH_SECRET;
   const originalFunnelSecret = process.env.FUNNEL_CAPABILITY_SECRET;
   const originalRateLimitSecret = process.env.RATE_LIMIT_IDENTIFIER_SECRET;
+  const originalRedisUrl = process.env.REDIS_URL;
   const originalRuntime = process.env.NEXT_RUNTIME;
 
   function setStrongProductionSecrets() {
@@ -11,12 +12,14 @@ describe("instrumentation register()", () => {
     process.env.FUNNEL_CAPABILITY_SECRET = "funnel_p2Tz7Jk5Xc9Qn4Vm8Ld1Wr6Hs3Ay0BgF";
     process.env.RATE_LIMIT_IDENTIFIER_SECRET =
       "ratelimit_M7kq4Pw9Xs2Fc8Vn5Dz1Ha6Rj3Te0LuB";
+    process.env.REDIS_URL = "rediss://redis.internal.example:6379";
   }
 
   afterEach(() => {
     process.env.AUTH_SECRET = originalAuthSecret;
     process.env.FUNNEL_CAPABILITY_SECRET = originalFunnelSecret;
     process.env.RATE_LIMIT_IDENTIFIER_SECRET = originalRateLimitSecret;
+    process.env.REDIS_URL = originalRedisUrl;
     process.env.NEXT_RUNTIME = originalRuntime;
     vi.unstubAllEnvs();
   });

@@ -12,6 +12,10 @@ independent.
 - `FUNNEL_CAPABILITY_SECRET`: signs anonymous homeowner lead-ownership tokens.
 - `RATE_LIMIT_IDENTIFIER_SECRET`: HMAC-hashes identifiers before they enter the
   rate-limit store.
+- `REDIS_URL`: authenticated shared Redis endpoint used for atomic rate-limit
+  enforcement across every application instance. Use `rediss://`/TLS in
+  production unless the provider supplies an equivalently protected private
+  network.
 
 Generate each secret independently with a cryptographically secure generator,
 for example `openssl rand -base64 32`. Do not reuse a value between variables.
@@ -64,6 +68,14 @@ and prevents service.
 Development and test do not run the production-strength checks. Their existing
 deterministic seed account and funnel-secret fallback remain available only
 outside `NODE_ENV=production`.
+
+Production validation also rejects a missing, malformed, or non-Redis
+`REDIS_URL`. Rate-limit requests fail closed with HTTP 503 if Redis cannot
+enforce a bucket; there is no production fallback to local memory. Configure
+Redis authentication, TLS, monitoring/alerting, high availability, and a
+memory/eviction policy that does not discard active limiter keys unexpectedly.
+For local testing, `REDIS_URL=redis://localhost:6379` is sufficient; never copy
+that value into production.
 
 ## PostgreSQL release ordering
 

@@ -9,6 +9,7 @@ const strongEnvironment = (): NodeJS.ProcessEnv => ({
   AUTH_SECRET: "auth_8CRvxgYQm4zkjS7f9uN2dL6pW3aT1hKe",
   FUNNEL_CAPABILITY_SECRET: "funnel_p2Tz7Jk5Xc9Qn4Vm8Ld1Wr6Hs3Ay0BgF",
   RATE_LIMIT_IDENTIFIER_SECRET: "ratelimit_M7kq4Pw9Xs2Fc8Vn5Dz1Ha6Rj3Te0LuB",
+  REDIS_URL: "rediss://redis.internal.example:6379",
 });
 
 describe("production environment validation", () => {
@@ -35,6 +36,18 @@ describe("production environment validation", () => {
     delete env.RATE_LIMIT_IDENTIFIER_SECRET;
     expect(validateProductionEnvironment(env).join(" ")).toContain(
       "RATE_LIMIT_IDENTIFIER_SECRET",
+    );
+  });
+
+  it("requires a valid Redis URL in production", () => {
+    const missing = strongEnvironment();
+    delete missing.REDIS_URL;
+    expect(validateProductionEnvironment(missing)).toContain("REDIS_URL is required in production");
+
+    const invalid = strongEnvironment();
+    invalid.REDIS_URL = "https://redis.example";
+    expect(validateProductionEnvironment(invalid)).toContain(
+      "REDIS_URL must use the redis: or rediss: protocol",
     );
   });
 

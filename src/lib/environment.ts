@@ -56,6 +56,20 @@ export function validateProductionEnvironment(
     return error ? [error] : [];
   });
 
+  const redisUrl = env.REDIS_URL?.trim();
+  if (!redisUrl) {
+    errors.push("REDIS_URL is required in production");
+  } else {
+    try {
+      const parsed = new URL(redisUrl);
+      if (parsed.protocol !== "redis:" && parsed.protocol !== "rediss:") {
+        errors.push("REDIS_URL must use the redis: or rediss: protocol");
+      }
+    } catch {
+      errors.push("REDIS_URL must be a valid Redis URL");
+    }
+  }
+
   for (let left = 0; left < PRODUCTION_SECRET_NAMES.length; left += 1) {
     for (let right = left + 1; right < PRODUCTION_SECRET_NAMES.length; right += 1) {
       const leftName = PRODUCTION_SECRET_NAMES[left];

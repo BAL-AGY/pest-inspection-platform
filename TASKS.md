@@ -65,17 +65,19 @@ before this audit.
 - [x] JWT session carrying `companyId` and `role`
 - [ ] **(gap, prior)** Role-based authorization — `role` (`owner`/`staff`) is
       carried but does not currently gate any route or UI differently
-- [x] **(implemented 2026-08-21 — Step 18)** Central public-API rate
+- [x] **(implemented Step 18; distributed backend hardening Step 23)** Central public-API rate
       limiting (`src/lib/rate-limit.ts`) with per-action policies for lead
       creation/continuation, tracking, availability, booking, and Auth.js
       POST actions; privacy-hashed identifiers; explicit trusted-proxy
       configuration; `429` + `Retry-After`; and a swappable
       `RateLimitStore`. Real-route tests prove normal requests succeed,
       excess writes are limited, identifiers stay isolated, and limited
-      requests add no DB rows. **Production scaling limitation:** the
-      current in-memory store is single-process only; deploy a shared
-      Redis/managed provider or trusted edge/WAF control before
-      multi-instance traffic. See `docs/ENDPOINT_SECURITY.md`.
+      requests add no DB rows. Production now requires a shared Redis store;
+      atomic Lua increments/expiry are verified with concurrent requests from
+      two independent clients. Backend failures fail closed with `503` rather
+      than silently disabling protection. In-memory storage remains available
+      only as a development/test fallback when `REDIS_URL` is absent. See
+      `docs/ENDPOINT_SECURITY.md`.
 - [ ] **(gap, audit)** Tenant/company isolation is architecturally correct
       by code inspection (every query scoped by `session.companyId`) but
       only one `Company` exists, so it has never been exercised by a test

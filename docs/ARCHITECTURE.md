@@ -134,11 +134,14 @@ count. Limited requests receive `429` plus `Retry-After` before any
 state-changing database operation. Booking transactions and the active-slot
 unique index remain authoritative; throttling is only an abuse-control layer.
 
-The current `InMemoryRateLimitStore` is a local/single-process provider and
-is **not sufficient for multi-instance production**. `RateLimitStore` is the
-seam for Redis or a managed atomic counter; a shared store or equivalent
-verified edge/WAF control remains required before horizontally scaled public
-traffic.
+Production uses `RedisRateLimitStore` through the same `RateLimitStore` seam.
+An atomic Lua increment/expiry operation and Redis server time make each bucket
+consistent across replicas. `REDIS_URL` is mandatory in production; a backend
+failure returns 503 and never falls back to an unlimited or process-local path.
+`InMemoryRateLimitStore` remains only for local/test use without Redis. Redis
+operations and multi-instance enforcement are covered by a real Redis
+integration suite; deployment still owns Redis HA, monitoring, TLS, and
+eviction/capacity configuration.
 
 ### Server-authoritative qualification
 
@@ -697,12 +700,11 @@ priority:
     through `src/lib/timezone.ts`; DST behavior is explicit and tested.
     Overnight hours remain unsupported and fail closed. See
     `docs/TIMEZONE.md`.
-14. ~~**No rate limiting on public endpoints.**~~ **Implemented 2026-08-21
-    (Step 18)** with centralized per-action policies, privacy-hashed
-    identifiers, explicit trusted-proxy handling, and 429/Retry-After.
-    Remaining limitation: the current provider is in-memory; replace it
-    through `RateLimitStore` with a shared backend or verified edge/WAF
-    control before multi-instance traffic. See `docs/ENDPOINT_SECURITY.md`.
+14. ~~**No rate limiting on public endpoints.**~~ **Implemented Step 18;
+    distributed backend completed Step 23** with centralized per-action
+    policies, privacy-hashed identifiers, explicit trusted-proxy handling,
+    429/Retry-After, and atomic shared Redis counters. Backend outages fail
+    closed with 503. See `docs/ENDPOINT_SECURITY.md`.
 15. ~~**Seed script had a hardcoded production-capable default owner
     password.**~~ **Fixed (Step 21).** Deterministic owner credentials remain
     available only for development/test. Production seeding requires explicit

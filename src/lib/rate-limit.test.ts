@@ -1,12 +1,17 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { NextRequest } from "next/server";
 import {
   enforceRateLimit,
   hashRateLimitIdentifier,
   RATE_LIMIT_POLICIES,
+  rateLimitResponse,
   resetRateLimitStore,
   trustedClientAddress,
 } from "./rate-limit";
+
+beforeEach(() => {
+  resetRateLimitStore();
+});
 
 afterEach(() => {
   resetRateLimitStore();
@@ -82,5 +87,29 @@ describe("rate limiting", () => {
     expect(trustedClientAddress(req)).toBe("10.0.0.2");
     process.env.RATE_LIMIT_TRUSTED_PROXY_HOPS = "2";
     expect(trustedClientAddress(req)).toBe("198.51.100.9");
+  });
+
+  it("rejects invalid proxy trust configuration and insufficient forwarded chains", () => {
+    const req = new NextRequest("http://localhost/api/track", {
+      headers: { "x-forwarded-for": "198.51.100.9" },
+    });
+    process.env.RATE_LIMIT_TRUSTED_PROXY_HOPS = "attacker-controlled";
+    expect(trustedClientAddress(req)).toBeNull();
+    process.env.RATE_LIMIT_TRUSTED_PROXY_HOPS = "2";
+    expect(trustedClientAddress(req)).toBeNull();
+  });
+
+  it("fails closed without exposing backend details when the store is unavailable", async () => {
+    const decision = await enforceRateLimit({
+      policy: "leadCreate",
+      companyScope: "company-a",
+      identifiers: [{ kind: "visitor", value: "visitor-a" }],
+      store: { consume: async () => { throw new Error("sensitive-backend-detail"); } },
+    });
+    expect(decision).toMatchObject({ allowed: false, backendUnavailable: true });
+    const response = rateLimitResponse(decision);
+    expect(response.status).toBe(503);
+    expect(response.headers.get("Retry-After")).toBe("30");
+    expect(await response.text()).not.toContain("sensitive-backend-detail");
   });
 });
