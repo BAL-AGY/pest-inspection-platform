@@ -28,11 +28,14 @@ before this audit.
 - [x] Git repository confirmed
 - [x] `CLAUDE.md` architecture/agent-instructions doc
 - [x] `docs/ARCHITECTURE.md` — stack finalized (Next.js/TS,
-      Prisma/SQLite-dev-Postgres-prod, Tailwind, Auth.js, Zod, Vitest,
+      Prisma/PostgreSQL, Tailwind, Auth.js, Zod, Vitest,
       Playwright) and system-architecture detail added
 - [x] Next.js + TypeScript + Tailwind app scaffolded
-- [ ] PostgreSQL production cutover (deliberate migration step — see
-      ARCHITECTURE.md; not done, no Postgres available in this environment)
+- [x] **(Step 22)** PostgreSQL architecture cutover: PostgreSQL-native Prisma
+      provider/baseline, `TIMESTAMPTZ(3)` instants, empty-database migration,
+      seed, full application suite, and real concurrency verification against
+      PostgreSQL 17.11. Managed production provisioning remains a deployment
+      task. See `docs/POSTGRESQL.md`.
 - [ ] CI pipeline (lint/typecheck/test/build/e2e on push — all currently
       pass locally but only when run manually; see `docs/GOAL_AUDIT.md`
       Critical Path item 8)
@@ -42,7 +45,8 @@ before this audit.
 - [x] Prisma schema: Company, User, Inspector, Lead, LeadNote, FunnelEvent,
       Appointment, MarketingSpend, AuditLog — all tenant-scoped by
       `companyId`
-- [x] Local dev database (SQLite) migrated and seeded (`npm run db:seed`)
+- [x] Local PostgreSQL database migrated and seeded (`npm run db:deploy`,
+      `npm run db:seed`); former SQLite migrations retained as an archive only
 - [x] Data model documented entity-by-entity with simplification rationale
       — `docs/DATA_MODEL.md`
 - [x] **(fixed 2026-08-20 — Step 11)** `Communication` table (delivery log —
@@ -188,19 +192,15 @@ before this audit.
       indexes treat NULLs as distinct, so it never fired — double-booking
       prevention rested entirely on a non-atomic check-then-insert read.
       Replaced with a partial unique index on `(companyId, scheduledStart)`
-      filtered to active statuses (migration
-      `20260820220719_atomic_booking_slot_guard`; not expressible as a
-      Prisma `@@unique`), plus an in-transaction re-check under
-      `Serializable` isolation immediately before every write (booking and
-      reschedule). Verified: the standalone script proved the exact
-      SQLite behavior; `e2e/booking-security.spec.ts` fires two genuinely
-      concurrent `POST /api/appointments` requests via `Promise.all` and
-      asserts exactly one succeeds, and separately proves real
-      daily-capacity exhaustion is rejected. **Residual, explicitly
-      unverified item**: the daily-capacity race under concurrent
-      PostgreSQL load specifically (as opposed to the same-slot race,
-      which is provably atomic on both engines) — see
-      `docs/ARCHITECTURE.md` Scheduling architecture.
+      filtered to active statuses in the PostgreSQL baseline (not expressible
+      as a Prisma `@@unique`), plus authoritative `Serializable` transactions.
+      **Step 22:** `runSerializableTransaction()` adds a bounded three-attempt
+      retry for genuine Prisma `P2034` conflicts, rerunning the full capacity
+      check. PostgreSQL 17.11 live-route tests prove simultaneous same-slot
+      requests persist one row; different-time requests at `capacity - 1`
+      persist only one; concurrent reschedules do not exceed destination
+      capacity and the failed move preserves its source; cancellation releases
+      slot/capacity. See `docs/POSTGRESQL.md`.
 - [x] **(fixed 2026-08-21 — Step 15)** Server-side appointment
       duration/slot validation. Previously `start`/`end` were trusted
       directly from the client with no duration or grid-alignment check.
@@ -385,7 +385,8 @@ before this audit.
       proxy-trust behavior, plus qualification schema/progression/company-
       eligibility behavior plus company-calendar/DST scheduling and
       reporting boundaries plus production environment/seed credential
-      validation and bcrypt verification (127 tests, `npm run test` —
+      validation, bcrypt verification, and bounded serializable retry behavior
+      (130 tests, `npm run test` —
       re-verified passing 2026-08-21)
 - [x] End-to-end test of the full required journey — traffic → landing →
       funnel → lead → scoring → MQL/SQL → availability → booking →
@@ -430,6 +431,12 @@ before this audit.
       after-hours and closed-day booking rejection, spring gap, fall overlap,
       dashboard today/week, calendar grouping, and reschedule rejection.
       Full Playwright suite is now 25/25 passing.
+- [x] **(added — Step 22)** PostgreSQL-specific integration/concurrency suite
+      (`e2e/postgresql-concurrency.spec.ts`, 6 scenarios) verifies the partial
+      index definition, simultaneous same-slot persisted count, concurrent
+      different-slot daily capacity, concurrent reschedule rollback,
+      cancel/reuse behavior, and two-company isolation against PostgreSQL
+      17.11. The complete Playwright suite is 31/31 against PostgreSQL.
 - [x] **(added 2026-08-20 — Step 9)** End-to-end test of durable suppression
       (`e2e/suppression.spec.ts`): opt-out persists, a brand new Lead under a
       new visitorId with the same email/phone stays suppressed and cannot
@@ -466,18 +473,19 @@ before this audit.
 - [x] `npm run build` (production Next.js build) passes
 - [ ] Dockerfile / hosting-specific deployment config
 - [ ] Production environment variable documentation beyond `.env.example`
-- [ ] PostgreSQL production database provisioned and migrated
+- [ ] Managed production PostgreSQL instance provisioned, backed up, pooled,
+      monitored, and migrated (local PostgreSQL 17.11 architecture is verified)
 
 ## 17. Final integration
 
 - [x] Realistic end-to-end scenario verified against the running app and
-      real (SQLite) database: attribution → qualification → lead scoring →
+      real PostgreSQL database: attribution → qualification → lead scoring →
       MQL/SQL → availability → booking → double-booking prevention →
       calendar → CRM profile → pipeline stage → dashboard → funnel
       analytics → inspection completed → customer won → revenue/ROI
       update — all confirmed working together, not fabricated
-- [ ] Same scenario re-verified against PostgreSQL before real production
-      launch
+- [x] Same scenario and PostgreSQL-specific concurrency suite re-verified
+      against PostgreSQL 17.11 (Step 22)
 - [ ] Highest-priority gaps from this review (suppression list,
       communication log, missing appointment-lifecycle events) closed
       before production launch, given the compliance boundaries in

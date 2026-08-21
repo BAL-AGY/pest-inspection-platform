@@ -33,8 +33,7 @@ and report real numbers, over a polished-looking demo.
 | App framework | Next.js (App Router) | One codebase serves SEO-able public landing/funnel pages (SSR) and the authenticated owner dashboard (CSR/RSC), with API routes for the backend. Avoids standing up a separate frontend/backend deployment for v1. |
 | Styling | Tailwind CSS | Fast, consistent, mobile-first by default — matches the mobile-first requirement for both the public funnel and the owner dashboard. |
 | ORM | Prisma | Type-safe query layer, first-class migrations, straightforward multi-tenant modeling via a `companyId` column on tenant-scoped tables. |
-| Database (dev/test, this environment) | SQLite | No local Postgres/Docker is available in this sandbox. SQLite lets the full stack — migrations, queries, tests — run and be verified for real, with no mocked persistence. |
-| Database (production target) | PostgreSQL | Postgres is the intended production database (e.g. managed Postgres such as Neon/Supabase/RDS — no vendor selected/contracted). Prisma's `provider` is fixed per schema, so moving from SQLite to Postgres is a deliberate, documented cutover (swap `provider`, regenerate migrations against a real Postgres instance) before production deployment — not a runtime env toggle. Schema is written to stay portable: no SQLite-only or Postgres-only types, enums modeled as validated strings rather than native DB enums. |
+| Database (dev/test/production) | PostgreSQL | PostgreSQL 17.11 is verified locally for fresh migrations, the full application suite, and real concurrent booking/reschedule races. One database engine across environments avoids provider-specific migration and transaction drift. No managed production vendor is selected yet. See `docs/POSTGRESQL.md`. |
 | Auth | Auth.js (NextAuth) v5, credentials provider | Owner/staff login for the dashboard. No OAuth vendor assumed. Passwords hashed (bcrypt/argon2), sessions via database sessions (tenant + role on the session). |
 | Validation | Zod | Shared validation for funnel input, API route input, and scoring/qualification rule definitions. |
 | Communications (email/SMS) | Provider-abstraction interface with a console/log "dev" provider | Confirmation, reminder, and follow-up sends go through one interface (`sendEmail`, `sendSms`) so a real provider (e.g. an ESP, Twilio-compatible SMS API) can be plugged in via env config later without touching call sites. No live third-party credentials are assumed, configured, or fabricated. Every send path enforces consent/opt-out state before sending, and TCPA/CAN-SPAM-relevant fields (opt-in timestamp, opt-out status, quiet hours) are modeled from the start even before a real provider is wired in. |
@@ -68,15 +67,16 @@ singleton to survive Next.js hot-reload without exhausting connections).
 
 ### Database
 
-SQLite for this environment's dev/test (no local Postgres available);
-PostgreSQL is the recorded production target. See the Stack table above for
-the full rationale and the deliberate-cutover plan. Full entity/relationship
-detail: `docs/DATA_MODEL.md`.
+PostgreSQL for development, integration tests, and production. The prior SQLite
+migration history is archived under `prisma/migrations-sqlite/`; active
+PostgreSQL migrations live under `prisma/migrations/`. Absolute timestamps use
+`TIMESTAMPTZ(3)`. Full operational guidance is in `docs/POSTGRESQL.md`; entity/
+relationship detail is in `docs/DATA_MODEL.md`.
 
 ### ORM
 
-Prisma. Migrations live in `prisma/migrations/`; `prisma/seed.ts` seeds one
-`Company` plus a default inspector for local/dev use.
+Prisma with PostgreSQL-native migrations in `prisma/migrations/`.
+`prisma/seed.ts` seeds one `Company` plus a default inspector for local/dev use.
 
 ### Authentication
 
@@ -207,7 +207,7 @@ appointment's company-local `[midnight, next midnight)` range, which naturally
 spans 23 or 25 hours. Dashboard today/week and calendar grouping use the same
 helpers. See `docs/TIMEZONE.md`.
 
-**Concurrency and validation rework (2026-08-21, Step 15).** An
+**Concurrency and validation rework (Steps 15 and 22).** An
 independent audit (Codex) flagged, and direct code inspection confirmed,
 that the previous double-booking guard didn't actually work, and that
 appointment timing wasn't validated server-side at all. Both are fixed:
@@ -221,23 +221,19 @@ appointment timing wasn't validated server-side at all. Both are fixed:
   entirely on a non-atomic check-then-insert read in the route handler,
   which a genuinely concurrent request could beat. It is now a **partial
   unique index** on `(companyId, scheduledStart)`, filtered to
-  `status IN ('booked', 'rescheduled')`, added by raw SQL in migration
-  `20260820220719_atomic_booking_slot_guard` (Prisma's schema DSL has no
+  `status IN ('booked', 'rescheduled')`, added by raw SQL in the PostgreSQL
+  baseline migration (Prisma's schema DSL has no
   filtered/partial-index construct, so it's not a `@@unique` in
   `prisma/schema.prisma` — see that model's comment). Scoped by
   `companyId` rather than `inspectorId` to match the app's actual
   single-shared-calendar model (the overlap check in
   `assertSlotBookable` is already company-wide, not per-inspector);
   filtered to active statuses so a cancelled appointment doesn't
-  permanently block re-booking that slot. **Verified**: a standalone
-  script confirmed the exact behavior against this environment's SQLite
-  (two concurrent active bookings at the same slot → one succeeds, one
-  throws Prisma `P2002`; cancel-then-rebook the same slot succeeds; two
-  cancelled rows at the same slot coexist) — see
-  `docs/DATA_MODEL.md` Appointment. `e2e/booking-security.spec.ts` fires
-  two genuinely concurrent `POST /api/appointments` requests at the same
-  slot via `Promise.all` and asserts exactly one succeeds.
-- **In-transaction re-check + capacity mitigation.** Both booking and
+  permanently block re-booking that slot. **Verified against PostgreSQL
+  17.11**: `e2e/postgresql-concurrency.spec.ts` fires simultaneous route
+  requests, asserts one 200/one 409, and confirms exactly one active row;
+  cancel-then-rebook at the identical instant also succeeds.
+- **Serializable transaction + bounded retry.** Both booking and
   reschedule now re-run `assertSlotBookable` a second time *inside* the
   `$transaction`, immediately before the write, using
   `Prisma.TransactionIsolationLevel.Serializable`. This closes almost all
@@ -246,19 +242,15 @@ appointment timing wasn't validated server-side at all. Both are fixed:
   and the **daily-capacity race** (two concurrent bookings at *different*
   times on a day already at `maxDailyInspections - 1`, which the partial
   unique index does not cover — capacity is a per-day count invariant,
-  not a per-row uniqueness invariant). **`Serializable` was confirmed to
-  be accepted by Prisma against this environment's SQLite without
-  erroring**, but SQLite does not implement PostgreSQL's true
-  serializable-snapshot conflict detection, so the capacity race is
-  **not provably closed under this environment** — only the same-slot
-  race is provably atomic here. **This must be verified against real
-  PostgreSQL before production launch**: fire concurrent bookings that
-  would jointly exceed daily capacity and confirm one is rejected with a
-  Prisma `P2034` (PostgreSQL serialization-conflict error, which the
-  route already catches and maps to a 409) or that the in-transaction
-  re-check alone is sufficient at expected traffic levels. This is
-  deliberately not claimed as proven — see CLAUDE.md's instruction not to
-  fabricate what hasn't been verified.
+  not a per-row uniqueness invariant). Step 22 wraps those transactions in
+  `runSerializableTransaction()`, which retries only Prisma `P2034` at most
+  three times and reruns the complete capacity read/check/write. The real
+  PostgreSQL suite starts at `capacity - 1`, submits two concurrent bookings
+  for different valid times, and proves one succeeds, one returns 409, and the
+  persisted company-local-day count equals capacity. Concurrent reschedules
+  have the same proof; the failed move preserves its source appointment. The
+  guarantee is database-backed across application instances. See
+  `docs/POSTGRESQL.md`.
 - **Server-derived, authoritative appointment timing.** `start`/`end`
   used to be trusted directly from the client on both booking and
   reschedule. The server now always derives the authoritative end as
@@ -498,8 +490,9 @@ config exists yet in this repo — see TASKS.md's Deployment milestone.
 
 ```
 prisma/
-  schema.prisma        Data model (see docs/DATA_MODEL.md)
-  migrations/           Generated migrations
+  schema.prisma        PostgreSQL data model (see docs/DATA_MODEL.md)
+  migrations/           Active PostgreSQL migration history
+  migrations-sqlite/    Archived pre-cutover SQLite history (never deployed)
   seed.ts               Seeds one Company + default Inspector for local/dev
 
 src/
@@ -539,6 +532,7 @@ src/
     qualification.ts         Authoritative questions, validation, progression, eligibility
     scoring.ts                Configurable scoring rules, classification
     scheduling.ts             Slot generation, conflict/capacity/duration checks
+    serializable-transaction.ts  Bounded PostgreSQL P2034 retry wrapper
     timezone.ts               IANA-zone conversion, DST, local day/week ranges
     funnel-capability.ts        Public lead-ownership HMAC capability tokens
                                   (production-gated secret, TTL/expiry)
@@ -563,12 +557,15 @@ e2e/
   booking-security.spec.ts  Playwright: IDOR/ownership adversarial tests,
                            genuinely concurrent double-booking, capacity
                            exhaustion, duration/slot/inspector validation
+  postgresql-concurrency.spec.ts  Real PostgreSQL index, simultaneous booking,
+                           daily capacity, reschedule, cancel, and tenant proofs
 
 docs/
   ARCHITECTURE.md   This file — stack + system architecture decision record
   DATA_MODEL.md      Entity-by-entity detail and simplification rationale
   EVENTS.md            Event taxonomy and firing sites
   STATES.md             Lead/Appointment transition logic as implemented
+  POSTGRESQL.md         Migration, concurrency, retry, and operations guide
 ```
 
 ## Multi-tenancy
@@ -676,14 +673,11 @@ priority:
     duration/slot validation.**~~ **Fixed 2026-08-21 (Step 15), with one
     honestly-documented residual gap.** See the Scheduling architecture
     section above. The same-slot race is provably atomic (partial unique
-    DB index, verified against this environment's SQLite). The
-    **daily-capacity race under genuinely concurrent PostgreSQL
-    transactions is not provably closed** — the in-transaction
-    `Serializable`-isolation re-check is the strongest architecture
-    implemented, but SQLite can't prove PostgreSQL's serialization-conflict
-    behavior. **Must be verified against real PostgreSQL before
-    production launch** — see Scheduling architecture above for the exact
-    test to run.
+    DB index, now verified against PostgreSQL). The daily-capacity and
+    reschedule races are also closed and verified against PostgreSQL 17.11 by
+    simultaneous real-route requests plus persisted-row assertions. Bounded
+    `P2034` retries rerun the complete serializable transaction. See Scheduling
+    architecture and `docs/POSTGRESQL.md`.
 12. **Funnel capability tokens are stored in `localStorage`, not an
     `httpOnly` cookie** (confirmed, Step 17 — see "Public funnel
     ownership" above for the full analysis). This does not meaningfully

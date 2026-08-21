@@ -1,3 +1,4 @@
+-- Archived SQLite development migration (not applied to PostgreSQL).
 -- CreateTable
 CREATE TABLE "Communication" (
     "id" TEXT NOT NULL PRIMARY KEY,

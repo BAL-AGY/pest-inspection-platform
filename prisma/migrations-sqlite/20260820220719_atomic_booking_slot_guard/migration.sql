@@ -1,3 +1,4 @@
+-- Archived SQLite development migration (not applied to PostgreSQL).
 -- DropIndex
 DROP INDEX "Appointment_inspectorId_scheduledStart_key";
 

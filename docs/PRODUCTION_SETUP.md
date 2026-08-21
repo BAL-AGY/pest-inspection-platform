@@ -6,8 +6,8 @@ independent.
 
 ## Required environment variables
 
-- `DATABASE_URL`: the production database connection string. The documented
-  PostgreSQL cutover must be completed before deployment.
+- `DATABASE_URL`: a TLS-enabled PostgreSQL connection string for a dedicated
+  production database. See `docs/POSTGRESQL.md`.
 - `AUTH_SECRET`: signs/encrypts Auth.js session material.
 - `FUNNEL_CAPABILITY_SECRET`: signs anonymous homeowner lead-ownership tokens.
 - `RATE_LIMIT_IDENTIFIER_SECRET`: HMAC-hashes identifiers before they enter the
@@ -64,3 +64,21 @@ and prevents service.
 Development and test do not run the production-strength checks. Their existing
 deterministic seed account and funnel-secret fallback remain available only
 outside `NODE_ENV=production`.
+
+## PostgreSQL release ordering
+
+PostgreSQL is required in every environment; SQLite is no longer an active
+application database. Before starting a production release:
+
+1. Take/verify a backup or recovery point.
+2. Run `npm run db:deploy` once against the production `DATABASE_URL`.
+3. Confirm `prisma migrate status` reports the schema current.
+4. Start the application instances with the same database URL and validated
+   security secrets.
+
+Do not run `prisma migrate dev` in production. Configure TLS and a connection
+pool sized for the database limit and replica count. Serverless or highly
+replicated deployments should use a Prisma-compatible pooled endpoint that
+preserves interactive transaction semantics. Restore testing and provider
+failover verification remain deployment responsibilities. Full migration and
+booking-concurrency details are in `docs/POSTGRESQL.md`.

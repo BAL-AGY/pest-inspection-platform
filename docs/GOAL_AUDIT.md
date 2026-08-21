@@ -42,11 +42,12 @@ document:
 
 | Command | Result |
 |---|---|
-| `npm run test` (Vitest) | **51/51 tests passed** |
+| Empty PostgreSQL 17.11 → `npm run db:deploy` → seed → schema diff | **Passed** — baseline applied, seed connected, migration current, no schema difference |
+| `npm run test` (Vitest) | **130/130 tests passed** |
 | `npx tsc --noEmit` | **0 errors** |
 | `npm run lint` (ESLint) | **0 errors/warnings** |
-| `npm run build` (`next build`) | **Succeeded** — all 19 routes compiled (2 static, 17 dynamic) |
-| `npx playwright test` (`e2e/full-funnel.spec.ts`) | **1/1 passed**, live, against the real dev server and real SQLite dev database — drove the entire required journey: landing page w/ UTM params → qualification funnel → contact capture → SQL classification → availability → booking → a second concurrent lead correctly blocked with `409` (double-booking prevention) → owner login → dashboard shows the real booking and cost metric → CRM pipeline shows the lead → mark inspection completed → mark customer won with contract value → dashboard reflects won count + revenue → marketing spend entry → cost-per-booked-inspection becomes a real computed number |
+| `next build --webpack` | **Succeeded** — all 19 routes compiled (default Turbopack remains blocked by this execution host's CSS-worker port `EPERM`) |
+| `npx playwright test` | **31/31 passed**, live against PostgreSQL 17.11, including the full homeowner journey and six real database concurrency/constraint scenarios |
 
 This means the core homeowner journey is not merely "code that looks
 right" — it was exercised end-to-end, live, moments before this document
@@ -54,11 +55,7 @@ was written, and passed.
 
 ## Git status
 
-Only one commit exists (`30529b7`). The documentation work from the prior
-review (`docs/ARCHITECTURE.md` edits, new `docs/DATA_MODEL.md`,
-`docs/EVENTS.md`, `docs/STATES.md`, and the `TASKS.md` milestone
-reorganization) is **uncommitted** in the working tree. No application code
-has been modified by any review to date.
+Step 22 is an uncommitted PostgreSQL checkpoint pending independent review.
 
 ---
 
@@ -111,7 +108,7 @@ IMPLEMENTED** · **BLOCKED BY EXTERNAL CREDENTIALS OR SERVICES**
 | Availability | COMPLETE AND WORKING | `generateCandidateSlots`/`filterAvailableSlots`, `GET /api/availability`, verified in e2e | — | — | — |
 | Business hours | COMPLETE AND WORKING | `Company.businessHours` JSON, `DEFAULT_BUSINESS_HOURS` seeded | — | — | — |
 | Capacity | COMPLETE AND WORKING | `maxDailyInspections` enforced in `assertSlotBookable`/`filterAvailableSlots`, unit-tested | — | — | — |
-| Double-booking protection | COMPLETE AND WORKING (fixed 2026-08-21 — Step 15) | An independent audit (Codex) found, and direct code inspection confirmed, that the previous `@@unique([inspectorId, scheduledStart])` guard provided **no real protection** — every booking has `inspectorId = null`, and SQL unique indexes treat NULLs as distinct, so it never actually fired. Replaced with a partial unique index on `(companyId, scheduledStart)` filtered to active statuses (migration `20260820220719_atomic_booking_slot_guard`), plus an in-transaction re-check under `Serializable` isolation immediately before every write. **Verified**: a standalone script proved the exact SQLite behavior (concurrent active bookings at the same slot → one `P2002`; cancel-then-rebook succeeds; two cancelled rows coexist); `e2e/booking-security.spec.ts` fires two genuinely concurrent `POST /api/appointments` requests via `Promise.all` and asserts exactly one succeeds — this is a materially stronger proof than the prior *sequential* two-request test. | The same-slot race is provably atomic on both SQLite and the PostgreSQL target (unique-index enforcement, not isolation-level-dependent). The **daily-capacity race** (two concurrent bookings at *different* times pushing a day over `maxDailyInspections`) is mitigated by the in-transaction re-check but **not provably closed under genuinely concurrent PostgreSQL load** — this requires verification against real PostgreSQL before production launch (see `docs/ARCHITECTURE.md` Scheduling architecture for the exact test). | P0 residual item before production launch: verify the capacity race against real PostgreSQL | Run a concurrent-capacity-exhaustion test against a real PostgreSQL instance once one exists |
+| Double-booking and daily-capacity protection | COMPLETE AND WORKING (Steps 15 and 22) | The active-slot partial unique index is preserved in the PostgreSQL baseline. Booking/reschedule use PostgreSQL `SERIALIZABLE` transactions through a bounded three-attempt `P2034` retry that reruns the complete read/check/write. `e2e/postgresql-concurrency.spec.ts` uses PostgreSQL 17.11 and simultaneous real-route requests: same-slot yields one 200/one 409/exactly one active row; different slots at `capacity - 1` yield one 200/one 409/exactly capacity rows; concurrent reschedule has the same bound and preserves the failed move's original slot; cancellation permits identical-slot reuse. | Sustained contention may exhaust the bounded retry and return 409; monitor conflict rates. Per-inspector capacity is not modeled. | — | Monitor `P2034`/409 rates in production and revisit only if real contention warrants it |
 | Booking timing/duration validation | COMPLETE AND WORKING (fixed 2026-08-21 — Step 15) | Codex flagged, and code inspection confirmed, that appointment `start`/`end` were trusted directly from the client with no server-side duration or slot-grid check. The server now always derives the authoritative end as `start + company.inspectionDurationMinutes` (client `end` is accepted for compatibility but never read), and `assertSlotBookable` rejects any duration mismatch (zero/negative/shortened/lengthened) and any `start` not aligned to the real slot grid. Applies to both initial booking and reschedule. Verified in `src/lib/scheduling.test.ts` (6 new adversarial unit tests) and `e2e/booking-security.spec.ts` (route-level: malicious `end` values are ignored and the persisted duration always matches; off-grid/off-hours starts are rejected with 400). | — | — | — |
 | Inspector validation | COMPLETE AND WORKING (fixed 2026-08-21 — Step 15) | Codex flagged that a client-supplied `inspectorId` was accepted as an opaque id with no check it belonged to the company or was active. `POST /api/appointments` now looks it up scoped by `companyId` and `active: true`; missing/inactive/cross-tenant ids are rejected with 400 `invalid_inspector`. Verified in `e2e/booking-security.spec.ts` against real inactive and cross-tenant fixture inspectors. | — | — | — |
 | Booking | COMPLETE AND WORKING | `POST /api/appointments`, verified in e2e | — | — | — |
@@ -245,9 +242,9 @@ IMPLEMENTED** · **BLOCKED BY EXTERNAL CREDENTIALS OR SERVICES**
 
 | Requirement | Status | Evidence | Gap | Priority | Recommended next action |
 |---|---|---|---|---|---|
-| Unit tests | COMPLETE AND WORKING | **127/127 passing** after Step 21, including company-timezone conversion/DST plus production secret strength/independence, production seed refusal, development seed usability, and bcrypt verification | — | — | — |
+| Unit tests | COMPLETE AND WORKING | **130/130 passing** after Step 22, including company-timezone conversion/DST, credential/seed validation, and bounded serializable retry behavior | — | — | — |
 | Integration tests | PARTIALLY IMPLEMENTED | The e2e suite is the closest thing to integration coverage (hits real API routes + real DB); no narrower API-route-level integration tests | — | P2 | Optional — e2e coverage is currently strong |
-| End-to-end tests | COMPLETE AND WORKING | **25/25 passing** after Step 20. The timezone scenario exercises real availability, before/after-hours and closed-day booking, valid booking, and invalid reschedule while all prior security/concurrency/qualification/rate/suppression/communication/full-funnel scenarios remain green. | No no-show/lost-outcome/second-company scenarios yet. Token expiry remains unit-tested rather than clock-faked through live HTTP. | P1 | Add scenarios for the remaining functional gaps when implemented |
+| End-to-end tests | COMPLETE AND WORKING | **31/31 passing against PostgreSQL 17.11** after Step 22. Six PostgreSQL-specific cases cover constraints, simultaneous same-slot and capacity races, reschedule rollback, cancellation reuse, and tenant isolation; the existing homeowner/security/qualification/rate/timezone/suppression/communication suite remains green. | No no-show/lost-outcome scenario yet. Token expiry remains unit-tested rather than clock-faked through live HTTP. | P1 | Add scenarios for remaining functional gaps when implemented |
 | Production build | COMPLETE AND WORKING | **`next build` succeeded**, run fresh for this audit, all 19 routes compiled | — | — | — |
 | Type checking | COMPLETE AND WORKING | **`tsc --noEmit` — 0 errors**, run fresh for this audit | — | — | — |
 | Linting | COMPLETE AND WORKING | **`eslint` — 0 errors/warnings**, run fresh for this audit | — | — | — |
@@ -312,17 +309,12 @@ work today; items 7+ build toward a safe production launch.
    fix. This was inserted ahead of items 6+ below because it was a live
    authorization gap, not a completeness/polish item.
 6. ~~**Fix the double-booking guard and add server-side booking
-   duration/slot/inspector validation**~~ **DONE (2026-08-21, Step 15),
-   with one honestly-documented residual gap.** The prior DB unique
+   duration/slot/inspector validation**~~ **DONE (Steps 15 and 22).** The prior DB unique
    constraint never actually fired (see Scheduling table above); replaced
-   with a partial unique index, verified atomic against this
-   environment's SQLite and via a genuinely concurrent
-   `Promise.all`-based e2e test. Duration/slot-grid/inspector validation
-   added server-side (previously fully client-trusted). **Residual,
-   explicitly unproven item**: the daily-capacity race under concurrent
-   PostgreSQL load — see Scheduling architecture in
-   `docs/ARCHITECTURE.md` for the exact verification still required
-   before production launch.
+   with a partial unique index and PostgreSQL serializable transaction retry.
+   Real simultaneous route tests against PostgreSQL 17.11 prove same-slot,
+   different-time daily capacity, and reschedule invariants by inspecting
+   persisted rows. Duration/slot-grid/inspector validation remains server-side.
 7. ~~**Add basic rate limiting to public endpoints.**~~ **IMPLEMENTED
    (2026-08-21 Step 18)** for lead creation/continuation, tracking,
    availability, booking, and Auth.js POST actions. Before multi-instance
@@ -363,10 +355,12 @@ work today; items 7+ build toward a safe production launch.
 15. **Choose and wire a live email/SMS provider** (blocked on an external
     vendor decision/credentials) — do this only after suppression/logging
     (already done, Steps 9/11) and rate limiting (item 7) exist.
-16. **PostgreSQL production cutover** (blocked on external hosting/DB
-    provisioning) — re-run the full verification suite (unit + e2e)
-    against Postgres before this is considered done, and specifically
-    exercise the daily-capacity concurrency test flagged in item 6.
+16. ~~**PostgreSQL application/database architecture cutover.**~~ **DONE
+    locally (Step 22):** PostgreSQL-native baseline, empty migration, seed,
+    130 unit tests, 31 live e2e tests, and concurrency proofs passed against
+    PostgreSQL 17.11. **Still external/deployment-blocked:** provision the
+    managed production database, pooling/TLS/backups/monitoring, apply
+    migrations, and validate provider-specific restore/failover behavior.
 17. **Deployment config** (Dockerfile or hosting-specific config, env var
     documentation) — blocked on choosing a host.
 18. **SEO/AEO polish, CTA/step-level event instrumentation, dashboard

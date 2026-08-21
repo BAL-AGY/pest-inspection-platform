@@ -13,6 +13,7 @@ import { requireSession } from "@/lib/require-session";
 import { MESSAGE_TEMPLATES } from "@/lib/communications";
 import { sendIfAllowed } from "@/lib/suppression";
 import { cancelAppointmentAndNotify } from "@/lib/appointment-actions";
+import { runSerializableTransaction } from "@/lib/serializable-transaction";
 
 const patchSchema = z.object({
   action: z.enum(["reschedule", "cancel", "no_show", "complete"]),
@@ -111,7 +112,7 @@ export async function PATCH(
 
     let updated;
     try {
-      updated = await prisma.$transaction(
+      updated = await runSerializableTransaction(
         async (tx) => {
           // Same authoritative, immediately-before-write re-check as
           // initial booking — see src/app/api/appointments/route.ts and
@@ -130,7 +131,6 @@ export async function PATCH(
             data: { scheduledStart: requestedStart, scheduledEnd: requestedEnd },
           });
         },
-        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
       );
     } catch (err) {
       // Final atomic backstop — see the identical comment in

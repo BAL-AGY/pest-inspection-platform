@@ -161,22 +161,29 @@ violated it — the double-booking prevention that existed before this fix
 relied entirely on a non-atomic check-then-insert read in the route
 handler. It is now a **partial unique index** on
 `(companyId, scheduledStart)`, filtered to `status IN ('booked',
-'rescheduled')`, added via raw SQL in migration
-`20260820220719_atomic_booking_slot_guard` (not expressible as a Prisma
+'rescheduled')`, added via raw SQL in the PostgreSQL baseline migration
+(not expressible as a Prisma
 `@@unique` — the schema DSL has no filtered-index construct; see the
 `Appointment` model's comment in `prisma/schema.prisma`). Scoped by
 `companyId` rather than `inspectorId` to match the app's actual
 single-shared-calendar model (`src/lib/scheduling.ts`'s overlap check is
 already company-wide, not per-inspector); filtered to active statuses so
 a cancelled appointment doesn't permanently block re-booking that slot.
-Verified empirically against this environment's SQLite (two concurrent
-active bookings at the same slot: one succeeds, one gets Prisma `P2002`;
-cancelling and re-booking the same slot succeeds; two cancelled rows at
-the same slot coexist) and via `e2e/booking-security.spec.ts`'s real
-concurrent-request test. See `docs/ARCHITECTURE.md` Scheduling
-architecture for what remains PostgreSQL-specific and unverified (the
-capacity-per-day race, as opposed to the same-slot race, which this index
-does not close).
+Verified against PostgreSQL 17.11 with simultaneous live-route requests:
+one same-slot request succeeds, one returns 409, and exactly one active row
+exists. Cancellation then permits an active replacement at the identical
+instant while preserving the cancelled history row.
+
+Daily capacity is not a row-level unique constraint. Booking and rescheduling
+use PostgreSQL serializable transactions plus a bounded three-attempt `P2034`
+retry that reruns the complete company-local-day capacity check. The real
+PostgreSQL suite proves different-slot booking and reschedule races cannot
+persist more than `maxDailyInspections`; a failed reschedule retains its
+original instant. See `docs/POSTGRESQL.md`.
+
+All `DateTime` fields are PostgreSQL `TIMESTAMPTZ(3)`. Appointments remain UTC
+instants in storage/API traffic; `Company.timezone` determines operational
+calendar bounds in application code.
 
 ### Inspector
 Minimal: `name`, `email`, `phone`, `active`. No linkage to

@@ -1,3 +1,4 @@
+-- Archived SQLite development migration (not applied to PostgreSQL).
 -- CreateTable
 CREATE TABLE "SuppressionEntry" (
     "id" TEXT NOT NULL PRIMARY KEY,

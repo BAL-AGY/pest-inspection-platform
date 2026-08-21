@@ -21,6 +21,7 @@ import { MESSAGE_TEMPLATES } from "@/lib/communications";
 import { sendIfAllowed } from "@/lib/suppression";
 import { verifyLeadToken } from "@/lib/funnel-capability";
 import { enforceRateLimit, rateLimitResponse, trustedClientAddress } from "@/lib/rate-limit";
+import { runSerializableTransaction } from "@/lib/serializable-transaction";
 
 const bookSchema = z.object({
   leadId: z.string().min(1),
@@ -139,7 +140,7 @@ export async function POST(req: NextRequest) {
 
   let appointment;
   try {
-    appointment = await prisma.$transaction(
+    appointment = await runSerializableTransaction(
       async (tx) => {
         // Authoritative, immediately-before-insert re-check, run again
         // inside the transaction to close almost all of the TOCTOU window
@@ -180,19 +181,14 @@ export async function POST(req: NextRequest) {
         });
         return created;
       },
-      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
     );
   } catch (err) {
     // Final, atomic backstop against a genuinely concurrent request that
     // beat the in-transaction re-check above: the partial unique DB index
     // on (companyId, scheduledStart) for active appointments (see
     // prisma/schema.prisma) turns a same-slot race into a P2002 here,
-    // proven against this environment's SQLite (see
-    // scripts referenced in docs/ARCHITECTURE.md) and expected to hold
-    // identically on PostgreSQL (unique-index enforcement is atomic on
-    // both). P2034 is PostgreSQL's serializable-transaction conflict
-    // error — SQLite never produces it, so this path is unverified here
-    // and MUST be exercised against real PostgreSQL before launch.
+    // proven by the PostgreSQL concurrency suite. P2034 is returned only
+    // after the bounded serializable retry policy is exhausted.
     if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") {
       return NextResponse.json(
         { error: "double_booked", reason: "This time slot was just taken." },

@@ -1,3 +1,4 @@
+-- Archived SQLite development baseline (not applied to PostgreSQL).
 -- CreateTable
 CREATE TABLE "Company" (
     "id" TEXT NOT NULL PRIMARY KEY,

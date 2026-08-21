@@ -1,14 +1,14 @@
 // Prisma schema — see docs/ARCHITECTURE.md for the database decision record.
-// Dev/test in this environment: SQLite (no local Postgres available).
-// Production target: PostgreSQL. Enums are modeled as validated strings
-// (not native Prisma enums) so this schema stays portable between the two.
+// Development, test, and production target PostgreSQL. The prior SQLite
+// migration history is retained under prisma/migrations-sqlite/ as an archive;
+// active migrations under prisma/migrations/ are PostgreSQL-native.
 
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
@@ -38,8 +38,8 @@ model Company {
   averageContractValueCents  Int? // nullable: unknown until entered
   estimatedCommissionPercent Float?
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
 
   users              User[]
   inspectors         Inspector[]
@@ -64,7 +64,7 @@ model User {
   email        String   @unique
   passwordHash String
   role         String   @default("owner") // "owner" | "staff"
-  createdAt    DateTime @default(now())
+  createdAt    DateTime @default(now()) @db.Timestamptz(3)
 
   auditLogs AuditLog[]
 }
@@ -142,13 +142,13 @@ model Lead {
 
   // Communications consent (TCPA/CAN-SPAM boundaries)
   smsConsent     Boolean   @default(false)
-  smsConsentAt   DateTime?
+  smsConsentAt   DateTime? @db.Timestamptz(3)
   emailConsent   Boolean   @default(false)
-  emailConsentAt DateTime?
-  optedOutAt     DateTime?
+  emailConsentAt DateTime? @db.Timestamptz(3)
+  optedOutAt     DateTime? @db.Timestamptz(3)
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
 
   appointments   Appointment[]
   funnelEvents   FunnelEvent[]
@@ -165,7 +165,7 @@ model LeadNote {
   lead      Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
   authorId  String?
   body      String
-  createdAt DateTime @default(now())
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
 }
 
 // ---------------------------------------------------------------------------
@@ -196,7 +196,7 @@ model FunnelEvent {
   clickId     String?
 
   metadata  String? // JSON-encoded event-specific payload
-  createdAt DateTime @default(now())
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
 
   @@index([companyId, eventType])
   @@index([visitorId])
@@ -215,18 +215,18 @@ model Appointment {
   inspectorId String?
   inspector   Inspector? @relation(fields: [inspectorId], references: [id])
 
-  scheduledStart DateTime
-  scheduledEnd   DateTime
+  scheduledStart DateTime @db.Timestamptz(3)
+  scheduledEnd   DateTime @db.Timestamptz(3)
 
   status String @default("booked")
   // "booked" | "rescheduled" | "cancelled" | "no_show" | "completed"
 
-  completedAt       DateTime?
-  cancelledAt       DateTime?
+  completedAt       DateTime? @db.Timestamptz(3)
+  cancelledAt       DateTime? @db.Timestamptz(3)
   rescheduledFromId String? // points at the prior Appointment.id when rescheduled
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
 
   communications Communication[]
 
@@ -235,7 +235,7 @@ model Appointment {
   // added by raw SQL in migration 20260820220719_atomic_booking_slot_guard.
   // It is not declarable as `@@unique` here — Prisma's schema DSL has no
   // filtered/partial-index construct — but it is real, DB-enforced, and
-  // atomic on both SQLite and the planned PostgreSQL target. The previous
+  // atomic on PostgreSQL. The previous
   // `@@unique([inspectorId, scheduledStart])` provided no real protection:
   // every booking today has `inspectorId = null` (no per-inspector
   // calendars exist yet — see docs/ARCHITECTURE.md), and SQL unique
@@ -261,11 +261,11 @@ model MarketingSpend {
   company     Company  @relation(fields: [companyId], references: [id])
   source      String
   campaign    String?
-  periodStart DateTime
-  periodEnd   DateTime
+  periodStart DateTime @db.Timestamptz(3)
+  periodEnd   DateTime @db.Timestamptz(3)
   amountCents Int
 
-  createdAt DateTime @default(now())
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
 
   @@index([companyId, source, periodStart])
 }
@@ -289,7 +289,7 @@ model SuppressionEntry {
   source String // e.g. "crm_manual_optout" — where the suppression originated
 
   metadata  String? // JSON-encoded extra context
-  createdAt DateTime @default(now())
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
 
   @@unique([companyId, channel, identifierType, identifierValue])
   @@index([companyId, identifierType, identifierValue])
@@ -326,8 +326,8 @@ model Communication {
   subject           String? // email only
   providerMessageId String? // set once a live provider accepts the send; correlates future delivery-status webhooks. Unset while only the dev provider is wired up.
 
-  attemptedAt DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  attemptedAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime @updatedAt @db.Timestamptz(3)
 
   @@index([companyId, leadId])
   @@index([companyId, status])
@@ -348,7 +348,7 @@ model AuditLog {
   entityType String
   entityId   String
   metadata   String? // JSON-encoded before/after or context
-  createdAt  DateTime @default(now())
+  createdAt  DateTime @default(now()) @db.Timestamptz(3)
 
   @@index([companyId, entityType, entityId])
 }
