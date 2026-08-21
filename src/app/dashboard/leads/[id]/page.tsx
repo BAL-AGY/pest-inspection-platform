@@ -8,6 +8,7 @@ import { parseCompanyTimeZone } from "@/lib/company";
 import { formatInCompanyTime } from "@/lib/timezone";
 import { QUALIFICATION_QUESTIONS, parseStoredQualificationAnswers } from "@/lib/qualification";
 import { attributionFromLead, clearRevenueEvent, recordCustomerOutcomeEvent, recordFunnelEvent, recordRevenueEvent } from "@/lib/analytics-events";
+import { formatPotentialValueRange, isServiceArrangement, parsePestCategories, parseServiceArrangements, pestCategoryForConcern, serviceArrangementLabel } from "@/lib/service-catalog";
 
 const EVENT_LABELS: Record<string, string> = {
   lead_created: "Lead created",
@@ -25,7 +26,8 @@ function answerLabel(questionId: string, value: unknown): string {
   const question = QUALIFICATION_QUESTIONS.find((candidate) => candidate.id === questionId);
   if (typeof value === "boolean") return value ? "Yes" : "No";
   if (typeof value !== "string") return "—";
-  return question?.options?.find((option) => option.value === value)?.label ?? value;
+  return [...(question?.options ?? []), ...(question?.acceptedOptions ?? [])]
+    .find((option) => option.value === value)?.label ?? value;
 }
 
 export default async function LeadDetailPage({
@@ -49,6 +51,11 @@ export default async function LeadDetailPage({
   const company = await prisma.company.findUnique({ where: { id: session.companyId } });
   if (!company) notFound();
   const timeZone = parseCompanyTimeZone(company);
+  const pestCategories = parsePestCategories(company);
+  const serviceArrangements = parseServiceArrangements(company);
+  const acquisitionCategory = pestCategories.find((category) => category.id === lead.pestCategory)
+    ?? pestCategoryForConcern(pestCategories, lead.pestConcern);
+  const potentialValueRange = acquisitionCategory ? formatPotentialValueRange(acquisitionCategory) : null;
 
   const answers = parseStoredQualificationAnswers(lead.qualificationAnswers);
 
@@ -92,6 +99,8 @@ export default async function LeadDetailPage({
     const outcome = String(formData.get("outcome"));
     if (outcome !== "won" && outcome !== "lost") return;
     const contractValueRaw = formData.get("contractValue");
+    const actualPestCategory = String(formData.get("actualPestCategory") ?? "");
+    const serviceArrangement = String(formData.get("serviceArrangement") ?? "");
     const contractValueCents =
       contractValueRaw && String(contractValueRaw).trim() !== ""
         ? Math.round(Number(contractValueRaw) * 100)
@@ -99,12 +108,19 @@ export default async function LeadDetailPage({
     if (contractValueCents !== undefined && (!Number.isFinite(contractValueCents) || contractValueCents < 0)) return;
     const ownedLead = await prisma.lead.findFirst({ where: { id, companyId: actionSession.companyId } });
     if (!ownedLead) return;
+    const actionCompany = await prisma.company.findUnique({ where: { id: actionSession.companyId } });
+    if (!actionCompany) return;
+    const validCategory = parsePestCategories(actionCompany).some((category) => category.id === actualPestCategory);
+    const validArrangement = isServiceArrangement(serviceArrangement) && parseServiceArrangements(actionCompany).includes(serviceArrangement);
+    if ((actualPestCategory && !validCategory) || (serviceArrangement && !validArrangement)) return;
     await prisma.lead.update({
       where: { id },
       data: {
         outcome,
         status: outcome === "won" ? "customer_won" : "customer_lost",
-        ...(contractValueCents !== undefined ? { contractValueCents } : {}),
+        ...(outcome === "lost" ? { contractValueCents: null } : contractValueCents !== undefined ? { contractValueCents } : {}),
+        ...(actualPestCategory ? { actualPestCategory } : {}),
+        ...(serviceArrangement ? { serviceArrangement } : {}),
       },
     });
     await recordCustomerOutcomeEvent({
@@ -198,7 +214,15 @@ export default async function LeadDetailPage({
         </div>
         <div>
           <p className="text-zinc-500">Pest concern</p>
-          <p className="font-semibold">{lead.pestConcern ?? "—"}</p>
+          <p className="font-semibold">{answerLabel("pestType", lead.pestConcern)}</p>
+        </div>
+        <div>
+          <p className="text-zinc-500">Pest category</p>
+          <p className="font-semibold">{acquisitionCategory?.label ?? "—"}</p>
+        </div>
+        <div>
+          <p className="text-zinc-500">Urgency</p>
+          <p className="font-semibold">{answerLabel("timeline", answers.timeline)}</p>
         </div>
         <div>
           <p className="text-zinc-500">Homeowner</p>
@@ -210,6 +234,14 @@ export default async function LeadDetailPage({
         </div>
         {lead.hasExistingProvider && <div><p className="text-zinc-500">Switcher reason</p><p className="font-semibold">{answerLabel("switchReason", lead.switchReason)}</p></div>}
       </section>
+
+      {potentialValueRange && (
+        <section className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm">
+          <h2 className="font-semibold text-amber-900">Potential Value Range</h2>
+          <p className="mt-1 text-lg font-bold text-amber-950">{potentialValueRange}</p>
+          <p className="mt-1 text-xs text-amber-800">Internal acquisition context only. Every property requires an inspection; this is not a homeowner quote and is never counted as revenue.</p>
+        </section>
+      )}
 
       <section>
         <h2 className="text-sm font-semibold text-zinc-500 uppercase mb-2">Attribution</h2>
@@ -288,7 +320,21 @@ export default async function LeadDetailPage({
         <h2 className="text-sm font-semibold text-zinc-500 uppercase mb-2">Outcome</h2>
         <form action={setOutcome} className="flex flex-wrap items-end gap-2 bg-white border border-zinc-200 rounded-lg p-4">
           <div>
-            <label className="text-xs text-zinc-500 block mb-1">Contract value ($)</label>
+            <label className="text-xs text-zinc-500 block mb-1">Actual pest/service category</label>
+            <select name="actualPestCategory" defaultValue={lead.actualPestCategory ?? acquisitionCategory?.id ?? ""} className="border border-zinc-300 rounded px-3 py-2 text-sm">
+              <option value="">Not recorded</option>
+              {pestCategories.map((category) => <option key={category.id} value={category.id}>{category.label}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="text-xs text-zinc-500 block mb-1">Service arrangement</label>
+            <select name="serviceArrangement" defaultValue={lead.serviceArrangement ?? ""} className="border border-zinc-300 rounded px-3 py-2 text-sm">
+              <option value="">Not recorded</option>
+              {serviceArrangements.map((arrangement) => <option key={arrangement} value={arrangement}>{serviceArrangementLabel(arrangement)}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="text-xs text-zinc-500 block mb-1">Actual contract value ($)</label>
             <input name="contractValue" type="number" step="0.01" className="border border-zinc-300 rounded px-3 py-2 text-sm w-32" />
           </div>
           <button name="outcome" value="won" className="text-sm rounded bg-emerald-700 text-white px-4 py-2">
@@ -301,6 +347,8 @@ export default async function LeadDetailPage({
         {lead.outcome && (
           <p className="text-sm text-zinc-500 mt-2">
             Current outcome: <strong>{lead.outcome}</strong>
+            {lead.actualPestCategory ? ` · ${pestCategories.find((category) => category.id === lead.actualPestCategory)?.label ?? lead.actualPestCategory}` : ""}
+            {lead.serviceArrangement ? ` · ${serviceArrangementLabel(lead.serviceArrangement)}` : ""}
             {lead.contractValueCents ? ` · $${(lead.contractValueCents / 100).toFixed(2)}` : ""}
           </p>
         )}

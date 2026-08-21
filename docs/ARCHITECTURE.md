@@ -77,6 +77,11 @@ relationship detail is in `docs/DATA_MODEL.md`.
 
 Prisma with PostgreSQL-native migrations in `prisma/migrations/`.
 `prisma/seed.ts` seeds one `Company` plus a default inspector for local/dev use.
+Company-scoped pest/service configuration maps the validated public pest answer
+to an acquisition category and an internal potential-value range. Staff may
+later record the actual post-inspection category, service arrangement, and
+contract value. Only the last of those is revenue; see
+`docs/SERVICE_CATALOG.md`.
 
 ### Authentication
 

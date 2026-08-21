@@ -37,6 +37,9 @@ export default async function LandingPage({
           Already work with another pest control company? We offer free
           second opinions too.
         </p>
+        <p className="text-xs text-zinc-400">
+          Every property is different. Your technician will inspect the home before recommending treatment or providing accurate pricing.
+        </p>
       </section>
 
       <footer className="border-t border-zinc-200 px-6 py-6 text-center text-sm text-zinc-500">

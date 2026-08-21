@@ -107,6 +107,22 @@ export function validateProductionEnvironment(
     }
   }
 
+  const authUrl = env.AUTH_URL?.trim();
+  if (!authUrl) {
+    errors.push("AUTH_URL is required in production");
+  } else {
+    try {
+      const parsed = new URL(authUrl);
+      if (parsed.protocol !== "https:" || parsed.username || parsed.password) {
+        errors.push("AUTH_URL must be a public HTTPS origin without embedded credentials");
+      } else if (parsed.pathname !== "/" || parsed.search || parsed.hash) {
+        errors.push("AUTH_URL must be an origin without a path, query, or fragment");
+      }
+    } catch {
+      errors.push("AUTH_URL must be a valid public HTTPS origin");
+    }
+  }
+
   const communicationProvider = env.COMMUNICATION_PROVIDER?.trim();
   if (!communicationProvider) {
     errors.push("COMMUNICATION_PROVIDER is required in production");

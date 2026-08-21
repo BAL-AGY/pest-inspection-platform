@@ -8,6 +8,7 @@ describe("funnel-capability", () => {
   const originalDatabaseUrl = process.env.DATABASE_URL;
   const originalCommunicationProvider = process.env.COMMUNICATION_PROVIDER;
   const originalCommunicationJobSecret = process.env.COMMUNICATION_JOB_SECRET;
+  const originalAuthUrl = process.env.AUTH_URL;
   beforeEach(() => {
     vi.resetModules();
     process.env.FUNNEL_CAPABILITY_SECRET = "test-only-secret-value";
@@ -21,6 +22,7 @@ describe("funnel-capability", () => {
     process.env.DATABASE_URL = originalDatabaseUrl;
     process.env.COMMUNICATION_PROVIDER = originalCommunicationProvider;
     process.env.COMMUNICATION_JOB_SECRET = originalCommunicationJobSecret;
+    process.env.AUTH_URL = originalAuthUrl;
     vi.unstubAllEnvs();
     vi.useRealTimers();
   });
@@ -112,6 +114,7 @@ describe("funnel-capability", () => {
     process.env.DATABASE_URL = "postgresql://database.internal.example/pest_inspection";
     process.env.COMMUNICATION_PROVIDER = "disabled";
     process.env.COMMUNICATION_JOB_SECRET = "job_4Vq8Nr2Xm7Ka9Ls1Dp6Tw3Hy5Bc0FzEe";
+    process.env.AUTH_URL = "https://app.example.invalid";
     vi.stubEnv("NODE_ENV", "production");
     vi.resetModules();
     const { issueLeadToken, verifyLeadToken } = await import("./funnel-capability");

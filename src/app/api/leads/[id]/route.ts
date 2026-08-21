@@ -5,6 +5,7 @@ import { requireSession } from "@/lib/require-session";
 import { LEAD_STATUSES } from "@/lib/pipeline";
 import { recordSuppression } from "@/lib/suppression";
 import { attributionFromLead, clearRevenueEvent, recordCustomerOutcomeEvent, recordRevenueEvent } from "@/lib/analytics-events";
+import { isServiceArrangement, parsePestCategories, parseServiceArrangements } from "@/lib/service-catalog";
 
 export async function GET(
   _req: NextRequest,
@@ -33,6 +34,8 @@ const patchSchema = z.object({
   outcome: z.enum(["won", "lost"]).optional(),
   lostReason: z.string().optional(),
   contractValueCents: z.number().int().nonnegative().optional(),
+  actualPestCategory: z.string().min(1).max(50).optional(),
+  serviceArrangement: z.string().min(1).max(50).optional(),
   optedOut: z.boolean().optional(),
 });
 
@@ -55,7 +58,16 @@ export async function PATCH(
   });
   if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  const { status, outcome, lostReason, contractValueCents, optedOut } = parsed.data;
+  const { status, outcome, lostReason, contractValueCents, actualPestCategory, serviceArrangement, optedOut } = parsed.data;
+
+  const company = await prisma.company.findUnique({ where: { id: session.companyId } });
+  if (!company) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  if (actualPestCategory && !parsePestCategories(company).some((category) => category.id === actualPestCategory)) {
+    return NextResponse.json({ error: "invalid_actual_pest_category" }, { status: 400 });
+  }
+  if (serviceArrangement && (!isServiceArrangement(serviceArrangement) || !parseServiceArrangements(company).includes(serviceArrangement))) {
+    return NextResponse.json({ error: "invalid_service_arrangement" }, { status: 400 });
+  }
 
   // Setting an outcome always advances the pipeline status to match — a
   // won/lost lead can never be left sitting in an earlier pipeline stage,
@@ -85,7 +97,9 @@ export async function PATCH(
       status: resolvedStatus,
       outcome: outcome ?? existing.outcome,
       lostReason: lostReason ?? existing.lostReason,
-      contractValueCents: contractValueCents ?? existing.contractValueCents,
+      contractValueCents: outcome === "lost" ? null : contractValueCents ?? existing.contractValueCents,
+      actualPestCategory: actualPestCategory ?? existing.actualPestCategory,
+      serviceArrangement: serviceArrangement ?? existing.serviceArrangement,
       optedOutAt: optedOut ? new Date() : existing.optedOutAt,
       emailOptedOutAt: optedOut ? new Date() : existing.emailOptedOutAt,
       smsOptedOutAt: optedOut ? new Date() : existing.smsOptedOutAt,

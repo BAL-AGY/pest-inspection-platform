@@ -20,6 +20,10 @@ independent.
   in this checkpoint.
 - `COMMUNICATION_JOB_SECRET`: independent random bearer secret used by the
   deployment scheduler for `/api/internal/communications/run`.
+- `AUTH_URL`: the public canonical HTTPS origin, with no path, query, embedded
+  credentials, or trailing application route (for example,
+  `https://app.example.com`). It also provides Auth.js host trust; do not add a
+  blanket `AUTH_TRUST_HOST=true` when `AUTH_URL` is configured.
 
 Generate each secret independently with a cryptographically secure generator,
 for example `openssl rand -base64 32`. Do not reuse a value between variables.

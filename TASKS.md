@@ -73,6 +73,9 @@ before this audit.
       deterministic demo economics fixtures, aggregate health endpoint,
       Render environment checklist, and client walkthrough. No external
       resource has been created and no deployment has occurred.
+- [x] Operator service catalog: configurable General Pest/Fleas/Rodents/Other
+      categories, internal potential-value ranges, post-inspection actual
+      category/service arrangement, and pest-category outcome reporting
 
 ## 2. Database
 
@@ -83,6 +86,9 @@ before this audit.
       `npm run db:seed`); former SQLite migrations retained as an archive only
 - [x] Data model documented entity-by-entity with simplification rationale
       — `docs/DATA_MODEL.md`
+- [x] Additive service-category migration preserves legacy detailed pest
+      answers while separating acquisition category, potential value, actual
+      category, service arrangement, and actual contract revenue
 - [x] **(fixed 2026-08-20 — Step 11)** `Communication` table (delivery log —
       one row per send attempt, blocked/sent/failed) — `prisma/schema.prisma`,
       migration `20260820205053_add_communication_log`
@@ -514,6 +520,9 @@ before this audit.
 - [x] GitHub Actions verification workflow (no deployment credentials/actions)
 - [x] Production environment, release, migration, staging, backup, monitoring
       and rollback documentation (`docs/DEPLOYMENT.md`, `docs/OPERATIONS.md`)
+- [x] Render staging Web Service specification, Node runtime pin, canonical
+      auth-origin validation, safe build command, guarded provisioning, and
+      post-deploy smoke command
 - [ ] Create the selected hosting account/resources and provider-specific
       configuration after user approval
 - [ ] Dockerfile / hosting-specific manifest (not justified for the recommended

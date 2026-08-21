@@ -21,7 +21,6 @@ credential.
 | `COMMUNICATION_TEST_WEBHOOK_SECRET` | Required in staging | Yes | independent random value, 32+ characters | Staging deterministic webhook signing only; never production |
 | `COMMUNICATION_PROVIDER` | Required | No | `deterministic` | Staging must use `deterministic`; production currently must use `disabled` |
 | `AUTH_URL` | Required for deployed staging auth | No | `https://SERVICE-NAME.onrender.com` | Staging URL only; change for production/custom domain |
-| `AUTH_TRUST_HOST` | Required on Render | No | `true` | Set only behind the selected trusted host/proxy |
 | `DEFAULT_COMPANY_SLUG` | Optional for current single tenant | No | `demo-pest-control` | Keep staging pointed at demo company; production uses its own slug |
 | `RATE_LIMIT_TRUSTED_PROXY_HOPS` | Optional; leave unset initially | No | positive integer such as `1` | Set only after verifying Render's actual proxy chain |
 | `SEED_OWNER_EMAIL` | Required only while manually provisioning owner | Yes (account identifier) | `owner@staging.example` | Unique staging identity; never use development or production owner |
@@ -33,9 +32,52 @@ provider, owner, or signing secrets with a `NEXT_PUBLIC_` prefix. Twilio,
 Resend, or other live provider variables must remain absent. The staging build
 rejects live communication provider modes.
 
+`AUTH_URL` establishes Auth.js's canonical origin and host trust. Do not add
+`AUTH_TRUST_HOST=true`: it is redundant when `AUTH_URL` is set and would trust
+arbitrary forwarded host values if the canonical URL were accidentally removed.
+
+Generate each application-owned secret independently. Run the same command
+once per secret and paste each result directly into a different Render secret
+field; do not reuse output:
+
+```bash
+openssl rand -base64 48
+```
+
+## Exact Render Web Service configuration
+
+| Render field | Value |
+|---|---|
+| Name | `pest-inspection-staging` (or the nearest available name; then use the hostname Render assigns in `AUTH_URL`) |
+| Repository | `BAL-AGY/pest-inspection-platform` |
+| Branch | `main` |
+| Region | **The exact region already used by both staging Postgres and Key Value** |
+| Root directory | blank (repository root) |
+| Runtime | Node |
+| Node version | `22.22.0`, pinned by `.node-version` |
+| Build command | `npm ci --include=dev && npm run build` |
+| Pre-deploy command | `npm run db:deploy` |
+| Start command | `npm run start` |
+| Health check path | `/api/health` |
+| Auto-deploy | after GitHub CI checks pass |
+| Instance count | 1 initially |
+| Plan | paid Starter Web Service; move to Standard only if measured memory/CPU requires it |
+
+Render pre-deploy commands require a paid Web Service. The web service,
+PostgreSQL, and Key Value resources must share one region so their private
+internal URLs work. If the two existing data resources are in different
+regions, stop and relocate/recreate one before creating the web service.
+Use Render's **internal** database and Key Value URLs, never their external
+URLs, for the Web Service variables.
+
+The explicit `--include=dev` is required because `NODE_ENV=production` is
+available during Render builds and npm would otherwise be allowed to omit
+TypeScript/Tailwind build dependencies. `postinstall` generates Prisma Client;
+the pre-deploy command only applies committed migrations. Startup never seeds.
+
 ## Render service commands
 
-- Build: `npm ci && npm run build`
+- Build: `npm ci --include=dev && npm run build`
 - Pre-deploy: `npm run db:deploy`
 - Start: `npm run start`
 - Health check: `/api/health`
@@ -66,6 +108,20 @@ target Company exists with `isDemo=true`, and
 inspector, deletes that demo tenant's activity, then recreates synthetic leads,
 appointments, events, attribution, revenue, and spend. It cannot target a
 non-demo company and must never be added to startup or pre-deploy commands.
+The demo seed also recreates deterministic SMS and email provider-account rows,
+so signed delivery/STOP webhook tests remain associated with the demo tenant
+after every reset without enabling any network sender.
+
+After deployment, an operator can run the non-mutating repository smoke check
+from a trusted machine:
+
+```bash
+STAGING_BASE_URL="https://SERVICE-NAME.onrender.com" npm run staging:smoke
+```
+
+This checks the staging banner plus application, PostgreSQL, and Redis health.
+`STAGING_BASE_URL` is an operator-only shell variable, not a Render service
+secret. Continue with `docs/STAGING_DEMO.md` for the full mutating journey.
 
 ## Post-deploy health checklist
 

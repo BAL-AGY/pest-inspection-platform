@@ -3,9 +3,10 @@
   "version": "0.1.0",
   "private": true,
   "engines": {
-    "node": ">=20.9.0"
+    "node": "22.x"
   },
   "scripts": {
+    "postinstall": "prisma generate",
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
@@ -21,7 +22,8 @@
     "db:generate": "prisma generate",
     "db:seed": "tsx prisma/seed.ts",
     "db:staging:demo": "tsx prisma/staging-demo.ts seed",
-    "db:staging:reseed": "tsx prisma/staging-demo.ts reset"
+    "db:staging:reseed": "tsx prisma/staging-demo.ts reset",
+    "staging:smoke": "node scripts/staging-smoke.mjs"
   },
   "dependencies": {
     "@date-fns/tz": "^1.5.0",

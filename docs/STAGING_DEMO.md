@@ -8,13 +8,13 @@ banner and owner `DEMO DATA` badge before entering the sample records.
 Open this placeholder-based URL using the actual Render staging hostname:
 
 ```text
-https://STAGING_HOST/?utm_source=google&utm_medium=cpc&utm_campaign=termite-inspection&utm_content=client-demo-search&utm_term=termite-help
+https://STAGING_HOST/?utm_source=google&utm_medium=cpc&utm_campaign=general-pest&utm_content=client-demo-search&utm_term=pest-help
 ```
 
 1. Click **Get My Free Inspection**.
 2. ZIP code: `78701`.
 3. Own this home: **Yes**.
-4. Pest issue: **Termites**.
+4. Pest issue: **General Pest**.
 5. Problem: **It's a serious infestation**.
 6. Existing pest-control provider: **Yes**.
 7. Switch reason: **Pests keep coming back after their treatment**.
@@ -42,13 +42,15 @@ demos so the anonymous visitor/lead journey is easy to identify.
 4. Open **Leads** and find `Avery Demo` in **Inspection Booked**.
 5. Open the lead and review the validated qualification answers, score/SQL
    classification, first/last attribution (`google / cpc`, campaign
-   `termite-inspection`), appointment, and timeline.
+   `general-pest`), appointment, and timeline.
 6. Open **Calendar** and confirm the same inspection appears on the correct
    company-local day.
 7. On the lead, mark the appointment **completed**.
-8. Enter contract value `1500.00` and click **Mark Won**.
+8. Confirm the internal **Potential Value Range** is clearly labeled as neither
+   a quote nor revenue. Select **General Pest**, **Quarterly service**, enter
+   actual contract value `1500.00`, and click **Mark Won**.
 9. Open **Marketing**, add a real-to-the-demo spend row: source `google`,
-   medium `cpc`, campaign `termite-inspection`, amount `500.00`, with a period
+   medium `cpc`, campaign `general-pest`, amount `500.00`, with a period
    covering today. This is explicitly demo input, not claimed performance.
 10. Return to **Overview → Last 30 days**. Show cost per booked inspection,
     CAC, attributed revenue, ROAS, funnel conversion, and the Google campaign

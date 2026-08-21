@@ -12,6 +12,8 @@ export interface QualificationQuestion {
   type: QuestionType;
   prompt: string;
   options?: QualificationOption[];
+  /** Backward-compatible stored/API values accepted but not offered in the current UI. */
+  acceptedOptions?: QualificationOption[];
   /** Only ask this question when the predicate over prior answers is true. */
   showIf?: (answers: QualificationAnswers) => boolean;
   required: boolean;
@@ -64,14 +66,18 @@ export const QUALIFICATION_QUESTIONS: QualificationQuestion[] = [
     type: "single_select",
     prompt: "What pest issue are you dealing with?",
     options: [
+      { value: "general_pest", label: "General Pest" },
+      { value: "fleas", label: "Fleas" },
+      { value: "rodents", label: "Rodents" },
+      { value: "other", label: "Other" },
+    ],
+    acceptedOptions: [
       { value: "ants", label: "Ants" },
       { value: "roaches", label: "Roaches" },
       { value: "termites", label: "Termites" },
-      { value: "rodents", label: "Rodents (mice/rats)" },
       { value: "bed_bugs", label: "Bed bugs" },
       { value: "spiders", label: "Spiders" },
       { value: "wasps", label: "Wasps/stinging insects" },
-      { value: "other", label: "Something else" },
     ],
     required: true,
   },
@@ -204,7 +210,8 @@ function validateAnswerValue(
         };
   }
 
-  const allowed = question.options?.some((option) => option.value === value) ?? false;
+  const allowed = [...(question.options ?? []), ...(question.acceptedOptions ?? [])]
+    .some((option) => option.value === value);
   return allowed
     ? null
     : {

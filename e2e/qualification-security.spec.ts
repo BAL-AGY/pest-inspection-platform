@@ -177,17 +177,30 @@ test.describe("server-authoritative qualification", () => {
     expect(lowResult.body.lead.classification).toBe("prospect");
     expect(lowResult.body.eligibleForBooking).toBe(false);
 
-    const unsupported = newSession("unsupported");
-    await completeFunnel(request, unsupported, { pestType: "other" });
-    const unsupportedResult = await submit(request, unsupported, {
-      contact: {
-        firstName: "Unsupported",
-        email: `${unsupported.visitorId}@example.com`,
-        phone: "+15125550173",
-      },
-    });
-    expect(unsupportedResult.body.supportedPest).toBe(false);
-    expect(unsupportedResult.body.eligibleForBooking).toBe(false);
+    const company = await prisma.company.findFirstOrThrow({ where: { slug: "demo-pest-control" } });
+    const originalSupportedPests = company.supportedPests;
+    let unsupportedResult: Awaited<ReturnType<typeof submit>> | null = null;
+    try {
+      const configured = (JSON.parse(originalSupportedPests) as string[]).filter((pest) => pest !== "other");
+      await prisma.company.update({ where: { id: company.id }, data: { supportedPests: JSON.stringify(configured) } });
+      const unsupported = newSession("unsupported");
+      await completeFunnel(request, unsupported, { pestType: "other" });
+      unsupportedResult = await submit(request, unsupported, {
+        contact: {
+          firstName: "Unsupported",
+          email: `${unsupported.visitorId}@example.com`,
+          phone: "+15125550173",
+        },
+      });
+      expect(unsupportedResult.body.supportedPest).toBe(false);
+      expect(unsupportedResult.body.eligibleForBooking).toBe(false);
+      const availability = await request.get(`/api/availability?leadId=${unsupportedResult.body.lead.id}`, {
+        headers: { "X-Funnel-Token": unsupportedResult.body.leadToken },
+      });
+      expect(availability.status()).toBe(403);
+    } finally {
+      await prisma.company.update({ where: { id: company.id }, data: { supportedPests: originalSupportedPests } });
+    }
 
     const outOfArea = newSession("out-of-area");
     await completeFunnel(request, outOfArea, { zipCode: "90210" });
@@ -202,12 +215,10 @@ test.describe("server-authoritative qualification", () => {
     expect(outResult.body.inServiceArea).toBe(false);
     expect(outResult.body.eligibleForBooking).toBe(false);
 
-    for (const result of [unsupportedResult, outResult]) {
-      const availability = await request.get(`/api/availability?leadId=${result.body.lead.id}`, {
-        headers: { "X-Funnel-Token": result.body.leadToken },
-      });
-      expect(availability.status()).toBe(403);
-    }
+    const availability = await request.get(`/api/availability?leadId=${outResult.body.lead.id}`, {
+      headers: { "X-Funnel-Token": outResult.body.leadToken },
+    });
+    expect(availability.status()).toBe(403);
   });
 
   test("booking gate re-derives complete qualification instead of trusting SQL classification", async ({ request }) => {

@@ -46,12 +46,34 @@ function atDaysFromNow(days: number, hourUtc = 16) {
 }
 
 async function seedDemoData(companyId: string) {
+  await prisma.communicationProviderAccount.createMany({
+    data: [
+      {
+        id: "staging-demo-provider-sms",
+        companyId,
+        provider: "deterministic",
+        externalAccountId: "staging-demo-sms",
+        channel: "sms",
+        address: "+15555550100",
+      },
+      {
+        id: "staging-demo-provider-email",
+        companyId,
+        provider: "deterministic",
+        externalAccountId: "staging-demo-email",
+        channel: "email",
+        address: "messages@demo.example.invalid",
+      },
+    ],
+    skipDuplicates: true,
+  });
+
   const createdAt = atDaysFromNow(-3);
   const fixtures = [
-    { id: "staging-demo-lead-won", visitorId: "staging-demo-visitor-won", firstName: "Jordan", lastName: "Demo", email: "jordan.demo@example.invalid", phone: "5125550101", source: "google", medium: "cpc", campaign: "termite-inspection", content: "search-ad-a", status: "customer_won", outcome: "won", contractValueCents: 120000, appointmentStatus: "completed", appointmentStart: atDaysFromNow(-1), score: 100 },
-    { id: "staging-demo-lead-booked", visitorId: "staging-demo-visitor-booked", firstName: "Taylor", lastName: "Sample", email: "taylor.sample@example.invalid", phone: "5125550102", source: "facebook", medium: "paid_social", campaign: "summer-pest-relief", content: "homeowner-video", status: "inspection_booked", outcome: null, contractValueCents: null, appointmentStatus: "booked", appointmentStart: atDaysFromNow(2), score: 100 },
-    { id: "staging-demo-lead-qualified", visitorId: "staging-demo-visitor-qualified", firstName: "Morgan", lastName: "Example", email: "morgan.example@example.invalid", phone: "5125550103", source: "google", medium: "cpc", campaign: "termite-inspection", content: "search-ad-b", status: "sql", outcome: null, contractValueCents: null, appointmentStatus: null, appointmentStart: null, score: 100 },
-    { id: "staging-demo-lead-lost", visitorId: "staging-demo-visitor-lost", firstName: "Casey", lastName: "Test", email: "casey.test@example.invalid", phone: "5125550104", source: "direct", medium: "none", campaign: null, content: null, status: "customer_lost", outcome: "lost", contractValueCents: null, appointmentStatus: "completed", appointmentStart: atDaysFromNow(-2, 18), score: 85 },
+    { id: "staging-demo-lead-won", visitorId: "staging-demo-visitor-won", firstName: "Jordan", lastName: "Demo", email: "jordan.demo@example.invalid", phone: "5125550101", source: "google", medium: "cpc", campaign: "rodent-inspection", content: "search-ad-a", status: "customer_won", outcome: "won", contractValueCents: 120000, appointmentStatus: "completed", appointmentStart: atDaysFromNow(-1), score: 100, pestType: "rodents", pestCategory: "rodents", actualPestCategory: "rodents", serviceArrangement: "QUARTERLY" },
+    { id: "staging-demo-lead-booked", visitorId: "staging-demo-visitor-booked", firstName: "Taylor", lastName: "Sample", email: "taylor.sample@example.invalid", phone: "5125550102", source: "facebook", medium: "paid_social", campaign: "summer-pest-relief", content: "homeowner-video", status: "inspection_booked", outcome: null, contractValueCents: null, appointmentStatus: "booked", appointmentStart: atDaysFromNow(2), score: 100, pestType: "fleas", pestCategory: "fleas", actualPestCategory: null, serviceArrangement: null },
+    { id: "staging-demo-lead-qualified", visitorId: "staging-demo-visitor-qualified", firstName: "Morgan", lastName: "Example", email: "morgan.example@example.invalid", phone: "5125550103", source: "google", medium: "cpc", campaign: "general-pest", content: "search-ad-b", status: "sql", outcome: null, contractValueCents: null, appointmentStatus: null, appointmentStart: null, score: 100, pestType: "general_pest", pestCategory: "general_pest", actualPestCategory: null, serviceArrangement: null },
+    { id: "staging-demo-lead-lost", visitorId: "staging-demo-visitor-lost", firstName: "Casey", lastName: "Test", email: "casey.test@example.invalid", phone: "5125550104", source: "direct", medium: "none", campaign: null, content: null, status: "customer_lost", outcome: "lost", contractValueCents: null, appointmentStatus: "completed", appointmentStart: atDaysFromNow(-2, 18), score: 85, pestType: "other", pestCategory: "other", actualPestCategory: "other", serviceArrangement: null },
   ] as const;
 
   for (const fixture of fixtures) {
@@ -74,8 +96,9 @@ async function seedDemoData(companyId: string) {
         state: "TX",
         zipCode: "78701",
         isHomeowner: true,
-        qualificationAnswers,
-        pestConcern: "termites",
+        qualificationAnswers: qualificationAnswers.replace('"termites"', `"${fixture.pestType}"`),
+        pestConcern: fixture.pestType,
+        pestCategory: fixture.pestCategory,
         hasExistingProvider: true,
         switchReason: "pest_returned_after_treatment",
         score: fixture.score,
@@ -83,6 +106,8 @@ async function seedDemoData(companyId: string) {
         status: fixture.status,
         outcome: fixture.outcome,
         contractValueCents: fixture.contractValueCents,
+        actualPestCategory: fixture.actualPestCategory,
+        serviceArrangement: fixture.serviceArrangement,
         source: fixture.source,
         medium: fixture.medium,
         campaign: fixture.campaign,

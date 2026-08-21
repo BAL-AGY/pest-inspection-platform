@@ -49,7 +49,7 @@ test("reports are tenant-, demo-mode-, date-, and company-timezone scoped", asyn
 
 test("source reporting deduplicates stages and attributes real revenue without inventing spend", async () => {
   const stamp = Date.now(); const primary = await prisma.company.findFirstOrThrow({ where: { slug: "demo-pest-control" } });
-  const lead = await prisma.lead.create({ data: { companyId: primary.id, isDemo: true, visitorId: `journey-${stamp}`, source: "google", medium: "cpc", campaign: `campaign-${stamp}`, content: "creative-a", classification: "sql", outcome: "won", contractValueCents: 50000 } });
+  const lead = await prisma.lead.create({ data: { companyId: primary.id, isDemo: true, visitorId: `journey-${stamp}`, source: "google", medium: "cpc", campaign: `campaign-${stamp}`, content: "creative-a", classification: "sql", pestConcern: "general_pest", pestCategory: "general_pest", actualPestCategory: "rodents", serviceArrangement: "ONE_TIME", outcome: "won", contractValueCents: 50000 } });
   const base = { companyId: primary.id, visitorId: lead.visitorId!, leadId: lead.id, isDemo: true, source: "google", medium: "cpc", campaign: `campaign-${stamp}`, content: "creative-a" };
   await prisma.funnelEvent.createMany({ data: [
     { ...base, eventType: "lead_created", eventKey: `lead:${lead.id}:created` }, { ...base, eventType: "lead_qualified", eventKey: `lead:${lead.id}:qualified` },
@@ -59,6 +59,14 @@ test("source reporting deduplicates stages and attributes real revenue without i
   const metrics = await getDashboardMetrics(primary.id, { preset: "today" });
   const row = metrics.marketingPerformance.find((item) => item.campaign === `campaign-${stamp}`)!;
   expect(row).toMatchObject({ leads: 1, qualified: 1, booked: 1, completed: 1, customers: 1, revenueCents: 50000, spendCents: null, costPerLeadCents: null, roas: null });
+  const pestRow = metrics.pestCategoryPerformance.find((item) => item.category === "rodents")!;
+  expect(pestRow.completed).toBeGreaterThanOrEqual(1);
+  expect(pestRow.customers).toBeGreaterThanOrEqual(1);
+  expect(pestRow.revenueCents).toBeGreaterThanOrEqual(50000);
+  const acquisitionRow = metrics.pestCategoryPerformance.find((item) => item.category === "general_pest")!;
+  expect(acquisitionRow.leads).toBeGreaterThanOrEqual(1);
+  expect(acquisitionRow.qualified).toBeGreaterThanOrEqual(1);
+  expect(acquisitionRow.booked).toBeGreaterThanOrEqual(1);
 });
 
 test("server event replay remains idempotent inside a PostgreSQL transaction", async () => {

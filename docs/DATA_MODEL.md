@@ -25,7 +25,8 @@ where that stops being true and a split becomes warranted.
 ### Company
 The tenant. Branding (`name`, `slug`, `timezone`), service-area/operations
 config (`serviceZipCodes`, `supportedPests`, `businessHours`,
-`inspectionDurationMinutes`, `maxDailyInspections` — JSON-encoded where
+`inspectionDurationMinutes`, `maxDailyInspections`, `pestCategoryConfig`,
+`serviceArrangements` — JSON-encoded where
 structured), lead-scoring config (`scoringRules`, `mqlThreshold`,
 `sqlThreshold`), and marketing-economics assumptions
 (`averageContractValueCents`, `estimatedCommissionPercent`, both nullable
@@ -48,12 +49,14 @@ The center of the schema. Carries, in one row:
 - **Contact**: `firstName`, `lastName`, `email`, `phone`
 - **Property**: `addressLine1/2`, `city`, `state`, `zipCode`, `isHomeowner`
 - **Qualification**: `qualificationAnswers` (JSON `Record<questionId,
-  answer>`), `pestConcern`, `hasExistingProvider`, `existingProviderName`,
+  answer>`), `pestConcern`, derived acquisition `pestCategory`,
+  `hasExistingProvider`, `existingProviderName`,
   `switchReason`
 - **Scoring/classification**: `score`, `classification`
   (`prospect|mql|sql`)
 - **Pipeline**: `status` (see `docs/STATES.md`), `outcome`, `lostReason`,
-  `contractValueCents`
+  `contractValueCents`, staff-confirmed `actualPestCategory`, and
+  `serviceArrangement`
 - **Attribution** (first-touch, set once and never overwritten after):
   `source`, `medium`, `campaign`, `content`, `term`, `landingPage`,
   `clickId`, `visitorId`
@@ -62,6 +65,11 @@ The center of the schema. Carries, in one row:
 
 Indexed on `(companyId, status)` (pipeline board queries) and `visitorId`
 (anonymous-to-identified linking).
+
+Potential value configuration never populates `contractValueCents` and never
+produces a revenue event. It is internal acquisition context only. Actual
+revenue remains a staff-entered won contract value after inspection. See
+`docs/SERVICE_CATALOG.md`.
 
 ### Contact — merged into Lead
 No separate table. **Split it out** when a lead can have more than one

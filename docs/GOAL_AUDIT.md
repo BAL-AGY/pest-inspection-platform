@@ -385,7 +385,17 @@ work today; items 7+ build toward a safe production launch.
     environment and smoke checks, `docs/STAGING_DEMO.md` defines the client
     walkthrough, simulated communications are staging-only/no-network, and
     demo provisioning/reseed commands are explicitly guarded. No Render
-    resource has been created or contacted.
+    Web Service has been created or contacted. The repository now pins Node,
+    validates the canonical HTTPS auth origin, documents the exact Render
+    fields, preserves build dependencies under `NODE_ENV=production`, and
+    includes a non-mutating hosted health smoke command.
 18. **SEO/AEO polish, CTA/step-level event instrumentation, dashboard
     source-breakdown UI, mobile device verification** — lower-priority
     polish items that don't block the core journey or compliance posture.
+19. **Operator service catalog checkpoint:** the funnel now offers General
+    Pest, Fleas, Rodents, and Other while accepting legacy detailed answers;
+    company configuration owns internal potential-value ranges and allowed
+    arrangements. The CRM captures actual post-inspection category,
+    one-time/quarterly/bi-monthly arrangement, and actual contract value.
+    Category analytics use tenant/demo-scoped server events. Potential ranges
+    are never emitted as revenue or shown to homeowners.

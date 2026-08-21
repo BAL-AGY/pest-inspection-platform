@@ -11,6 +11,7 @@ const strongEnvironment = (): NodeJS.ProcessEnv => ({
   RATE_LIMIT_IDENTIFIER_SECRET: "ratelimit_M7kq4Pw9Xs2Fc8Vn5Dz1Ha6Rj3Te0LuB",
   DATABASE_URL: "postgresql://database.internal.example/pest_inspection",
   REDIS_URL: "rediss://redis.internal.example:6379",
+  AUTH_URL: "https://app.example.invalid",
   COMMUNICATION_PROVIDER: "disabled",
   COMMUNICATION_JOB_SECRET: "job_4Vq8Nr2Xm7Ka9Ls1Dp6Tw3Hy5Bc0FzEe",
 });
@@ -63,6 +64,24 @@ describe("production environment validation", () => {
     invalid.DATABASE_URL = "sqlite:./production.db";
     expect(validateProductionEnvironment(invalid)).toContain(
       "DATABASE_URL must use the postgresql: or postgres: protocol",
+    );
+  });
+
+  it("requires a canonical HTTPS authentication origin in production", () => {
+    const missing = strongEnvironment();
+    delete missing.AUTH_URL;
+    expect(validateProductionEnvironment(missing)).toContain("AUTH_URL is required in production");
+
+    const insecure = strongEnvironment();
+    insecure.AUTH_URL = "http://staging.example.invalid";
+    expect(validateProductionEnvironment(insecure)).toContain(
+      "AUTH_URL must be a public HTTPS origin without embedded credentials",
+    );
+
+    const withPath = strongEnvironment();
+    withPath.AUTH_URL = "https://staging.example.invalid/auth";
+    expect(validateProductionEnvironment(withPath)).toContain(
+      "AUTH_URL must be an origin without a path, query, or fragment",
     );
   });
 

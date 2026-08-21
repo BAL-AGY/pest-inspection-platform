@@ -4,10 +4,58 @@ import { resolveAnalyticsRange } from "./analytics-range";
 import { parseCompanyTimeZone } from "./company";
 import { QUALIFICATION_QUESTIONS } from "./qualification";
 import { companyDayRange, companyWeekRange } from "./timezone";
+import { parsePestCategories, pestCategoryForConcern } from "./service-catalog";
 
 export function dashboardOperationalRanges(now: Date, timeZone: string) {
   const today = companyDayRange(now, timeZone); const week = companyWeekRange(now, timeZone);
   return { todayStart: today.start, tomorrowStart: today.end, weekStart: week.start, weekEnd: week.end };
+}
+
+type CategorizedEvent = AnalyticsEvent & {
+  lead: { pestCategory: string | null; pestConcern: string | null; actualPestCategory: string | null } | null;
+};
+
+function pestCategoryPerformance(events: CategorizedEvent[], categories: ReturnType<typeof parsePestCategories>) {
+  const rows = new Map(categories.map((category) => [category.id, {
+    category: category.id, label: category.label, leads: new Set<string>(), qualified: new Set<string>(),
+    booked: new Set<string>(), completed: new Set<string>(), customers: new Set<string>(), revenueCents: 0,
+  }]));
+  for (const event of events) {
+    if (!event.lead || !event.leadId) continue;
+    const acquisitionCategoryId = event.lead.pestCategory
+      ?? pestCategoryForConcern(categories, event.lead.pestConcern)?.id;
+    const usesInspectedCategory = ["inspection_completed", "customer_won", "customer_lost", "revenue_recorded", "revenue_removed"]
+      .includes(event.eventType);
+    const categoryId = usesInspectedCategory
+      ? event.lead.actualPestCategory ?? acquisitionCategoryId
+      : acquisitionCategoryId;
+    if (!categoryId) continue;
+    const row = rows.get(categoryId);
+    if (!row) continue;
+    if (event.eventType === "lead_created") row.leads.add(event.leadId);
+    if (event.eventType === "lead_qualified") row.qualified.add(event.leadId);
+    if (event.eventType === "inspection_booked") row.booked.add(event.leadId);
+    if (event.eventType === "inspection_completed") row.completed.add(event.leadId);
+    if (event.eventType === "customer_won") row.customers.add(event.leadId);
+    if (event.eventType === "revenue_recorded" && event.metadata) {
+      try {
+        const amount = JSON.parse(event.metadata).amountCents;
+        if (Number.isInteger(amount) && amount >= 0) row.revenueCents += amount;
+      } catch { /* malformed legacy metadata contributes no revenue */ }
+    }
+  }
+  return [...rows.values()].map((row) => ({
+    category: row.category,
+    label: row.label,
+    leads: row.leads.size,
+    qualified: row.qualified.size,
+    booked: row.booked.size,
+    completed: row.completed.size,
+    customers: row.customers.size,
+    closeRate: row.completed.size ? row.customers.size / row.completed.size : null,
+    revenueCents: row.revenueCents,
+    revenuePerCompletedInspectionCents: row.completed.size ? row.revenueCents / row.completed.size : null,
+  }));
 }
 
 type Spend = { source: string; medium: string | null; campaign: string | null; content: string | null; amountCents: number };
@@ -40,7 +88,7 @@ function campaignPerformance(events: AnalyticsEvent[], spends: Spend[]) {
 }
 
 export async function getDashboardMetrics(companyId: string, options: { preset?: string; start?: string; end?: string; now?: Date } = {}) {
-  const company = await prisma.company.findUnique({ where: { id: companyId }, select: { timezone: true, isDemo: true } });
+  const company = await prisma.company.findUnique({ where: { id: companyId }, select: { timezone: true, isDemo: true, pestCategoryConfig: true } });
   if (!company) throw new Error("Company not found.");
   const now = options.now ?? new Date(); const timeZone = parseCompanyTimeZone(company);
   const range = resolveAnalyticsRange(options, timeZone, now);
@@ -49,7 +97,7 @@ export async function getDashboardMetrics(companyId: string, options: { preset?:
   const [inspectionsToday, inspectionsThisWeek, events, spends, sqlCount, mqlCount, noShows] = await Promise.all([
     prisma.appointment.count({ where: { ...mode, status: { in: ["booked", "rescheduled"] }, scheduledStart: { gte: operational.todayStart, lt: operational.tomorrowStart } } }),
     prisma.appointment.count({ where: { ...mode, status: { in: ["booked", "rescheduled"] }, scheduledStart: { gte: operational.weekStart, lt: operational.weekEnd } } }),
-    prisma.funnelEvent.findMany({ where: { ...mode, createdAt: { gte: range.start, lt: range.end } }, select: { eventType: true, visitorId: true, leadId: true, appointmentId: true, funnelStep: true, source: true, medium: true, campaign: true, content: true, metadata: true } }),
+    prisma.funnelEvent.findMany({ where: { ...mode, createdAt: { gte: range.start, lt: range.end } }, select: { eventType: true, visitorId: true, leadId: true, appointmentId: true, funnelStep: true, source: true, medium: true, campaign: true, content: true, metadata: true, lead: { select: { pestCategory: true, pestConcern: true, actualPestCategory: true } } } }),
     prisma.marketingSpend.findMany({ where: { ...mode, periodStart: { lt: range.end }, periodEnd: { gte: range.start } }, select: { source: true, medium: true, campaign: true, content: true, amountCents: true } }),
     prisma.lead.count({ where: { ...mode, classification: "sql", createdAt: { gte: range.start, lt: range.end } } }),
     prisma.lead.count({ where: { ...mode, classification: "mql", createdAt: { gte: range.start, lt: range.end } } }),
@@ -71,6 +119,7 @@ export async function getDashboardMetrics(companyId: string, options: { preset?:
     showRate: computeShowRate(completedInspections, completedInspections + noShows), closeRate: computeCloseRate(customersWon, completedInspections),
     visitorToStartRate: visitors ? funnelStarts / visitors : null, leadToQualifiedRate: newLeads ? qualifiedCount / newLeads : null, qualifiedToBookedRate: qualifiedCount ? bookedCount / qualifiedCount : null,
     marketingPerformance: campaignPerformance(events, spends),
+    pestCategoryPerformance: pestCategoryPerformance(events, parsePestCategories(company)),
   };
 }
 export type DashboardMetrics = Awaited<ReturnType<typeof getDashboardMetrics>>;

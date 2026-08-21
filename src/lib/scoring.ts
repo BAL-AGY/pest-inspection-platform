@@ -108,7 +108,7 @@ export const DEFAULT_SCORING_RULES: ScoringRule[] = [
     id: "high-risk-pest",
     field: "pestType",
     operator: "in",
-    value: ["termites", "bed_bugs", "rodents"],
+    value: ["termites", "bed_bugs", "rodents", "fleas"],
     points: 15,
   },
   {

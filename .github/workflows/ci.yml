@@ -43,6 +43,7 @@ jobs:
       DATABASE_URL: postgresql://postgres@localhost:5432/pest_inspection_test
       REDIS_URL: redis://localhost:6379
       COMMUNICATION_PROVIDER: disabled
+      AUTH_URL: https://ci.example.invalid
 
     steps:
       - name: Check out repository

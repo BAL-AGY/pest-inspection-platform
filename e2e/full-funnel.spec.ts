@@ -19,6 +19,7 @@ test("real prospect moves through the full acquisition-to-outcome journey", asyn
 
   await page.getByRole("link", { name: /get my free inspection/i }).click();
   await expect(page).toHaveURL(/\/inspection/);
+  await expect(page.getByText("Potential Value Range", { exact: true })).toHaveCount(0);
 
   // 3. Qualification funnel — progressive, conditional questions.
   await page.getByPlaceholder("ZIP code").fill("73301");
@@ -28,7 +29,7 @@ test("real prospect moves through the full acquisition-to-outcome journey", asyn
   await page.getByRole("button", { name: "Yes" }).click();
 
   await expect(page.getByRole("heading", { name: /what pest issue/i })).toBeVisible();
-  await page.getByRole("button", { name: "Termites" }).click();
+  await page.getByRole("button", { name: "General Pest" }).click();
 
   await expect(page.getByRole("heading", { name: /describe the problem/i })).toBeVisible();
   await page.getByRole("button", { name: /serious infestation/i }).click();
@@ -82,7 +83,7 @@ test("real prospect moves through the full acquisition-to-outcome journey", asyn
   for (const answers of [
     { zipCode: "73301" },
     { isHomeowner: true },
-    { pestType: "termites" },
+    { pestType: "general_pest" },
     { pestSeverity: "severe" },
     { hasExistingProvider: false },
     { timeline: "asap" },
@@ -115,7 +116,7 @@ test("real prospect moves through the full acquisition-to-outcome journey", asyn
   await expect(page).toHaveURL(/\/dashboard/);
 
   // 16-17. Owner dashboard and funnel analytics reflect the real booking.
-  await expect(page.getByText(/cost per qualified booked inspection/i)).toBeVisible();
+  await expect(page.getByText("Cost per qualified booked inspection", { exact: true })).toBeVisible();
   // The first available appointment can legitimately be a later company-local
   // day (for example when this suite runs after business hours). Assert the
   // all-time booked funnel metric, not the operational "today" bucket.
@@ -131,12 +132,19 @@ test("real prospect moves through the full acquisition-to-outcome journey", asyn
   await expect(page).toHaveURL(new RegExp(leadId));
   await expect(page.locator("p.uppercase", { hasText: "sql" })).toBeVisible();
   await expect(page.getByLabel("Lead summary").getByText("73301", { exact: true })).toBeVisible();
-  await expect(page.getByText("Termites", { exact: true })).toBeVisible();
+  await expect(page.getByText("General Pest", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("Potential Value Range", { exact: true })).toBeVisible();
+  await expect(page.getByText("$200–$1,000", { exact: true })).toBeVisible();
   await expect(page.getByText("google", { exact: true }).first()).toBeVisible();
   await expect(page.getByText("e2e_playwright", { exact: true }).first()).toBeVisible();
   await expect(page.getByText(/what's the zip code of the property/i)).toBeVisible();
   await expect(page.getByText("Qualified lead", { exact: true })).toBeVisible();
   await expect(page.getByText("Booked free home inspection", { exact: true })).toBeVisible();
+
+  const invalidOutcomeMetadata = await page.request.patch(`/api/leads/${leadId}`, {
+    data: { actualPestCategory: "attacker-invented", serviceArrangement: "WEEKLY" },
+  });
+  expect(invalidOutcomeMetadata.status()).toBe(400);
 
   const note = `Manual demo follow-up ${Date.now()}`;
   await page.getByPlaceholder("Add a note…").fill(note);
@@ -156,8 +164,11 @@ test("real prospect moves through the full acquisition-to-outcome journey", asyn
 
   // 20. Mark the customer Won with a contract value.
   await page.locator('input[name="contractValue"]').fill("450.00");
+  await page.locator('select[name="actualPestCategory"]').selectOption("general_pest");
+  await page.locator('select[name="serviceArrangement"]').selectOption("QUARTERLY");
   await page.getByRole("button", { name: "Mark Won" }).click();
   await expect(page.getByText(/current outcome:\s*won/i)).toBeVisible();
+  await expect(page.getByText(/quarterly service/i).last()).toBeVisible();
 
   // 21-22. Analytics/ROI update from the real outcome. Cost metrics are
   // driven entirely by real entered data — never fabricated — so this
@@ -180,12 +191,13 @@ test("real prospect moves through the full acquisition-to-outcome journey", asyn
   // computed number (never "no data yet" once both spend and a booking
   // exist — both are true after this run).
   await page.goto("/dashboard");
-  await expect(page.getByText("Cost per booked inspection").locator("..")).toContainText(/\$\d/);
+  await expect(page.getByText("Cost per qualified booked inspection", { exact: true }).locator("..")).toContainText(/\$\d/);
   await expect(page.getByText("Cost per qualified lead").locator("..")).toContainText(/\$\d/);
   await expect(page.getByText("Lead to qualified").locator("..")).toContainText(/%/);
   await expect(page.getByText("Qualified to booked").locator("..")).toContainText(/%/);
   await expect(page.getByText("Show rate").locator("..")).toContainText(/%/);
-  await expect(page.getByText("Close rate").locator("..")).toContainText(/%/);
+  const operations = page.getByRole("heading", { name: "Operations and conversion" }).locator("..");
+  await expect(operations.getByText("Close rate", { exact: true }).locator("..")).toContainText(/%/);
   await expect(page.getByText("ROI", { exact: true }).locator("..")).toContainText(/%/);
   const attributedCampaignRow = page.getByRole("row", { name: /google \/ cpc.*e2e_playwright/i });
   await expect(attributedCampaignRow).toBeVisible();

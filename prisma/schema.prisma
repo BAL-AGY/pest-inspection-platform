@@ -29,6 +29,8 @@ model Company {
   businessHours             String // JSON-encoded weekly business-hours config
   inspectionDurationMinutes Int    @default(60)
   maxDailyInspections       Int    @default(8)
+  pestCategoryConfig        String? // JSON-encoded PestCategory[] with internal potential-value ranges
+  serviceArrangements       String? // JSON-encoded allowed service-arrangement identifiers
 
   // Lead scoring config (company-configurable, not hardcoded)
   scoringRules String // JSON-encoded scoring rule set
@@ -118,6 +120,7 @@ model Lead {
   // Pest concern / qualification answers (JSON-encoded, schema-flexible by design)
   qualificationAnswers String? // JSON-encoded Record<questionId, answer>
   pestConcern          String?
+  pestCategory         String? // acquisition category derived from the validated pest concern
 
   // Existing provider / switcher path
   hasExistingProvider  Boolean?
@@ -136,6 +139,8 @@ model Lead {
   outcome            String? // "won" | "lost" (set once inspection completed)
   lostReason         String?
   contractValueCents Int?
+  actualPestCategory String? // staff-confirmed after inspection; distinct from acquisition category
+  serviceArrangement String? // ONE_TIME | QUARTERLY | BIMONTHLY
 
   // Attribution (first-touch, captured at first FunnelEvent)
   source          String?
@@ -187,6 +192,7 @@ model Lead {
   communications Communication[]
 
   @@index([companyId, status])
+  @@index([companyId, pestCategory])
   @@index([visitorId])
   @@index([companyId, normalizedEmail])
   @@index([companyId, normalizedPhone])

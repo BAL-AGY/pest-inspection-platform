@@ -8,6 +8,7 @@ import bcrypt from "bcryptjs";
 import { DEFAULT_SCORING_RULES } from "../src/lib/scoring";
 import { DEFAULT_BUSINESS_HOURS } from "../src/lib/scheduling";
 import { resolveSeedOwnerConfig } from "../src/lib/seed-config";
+import { DEFAULT_PEST_CATEGORIES, SERVICE_ARRANGEMENTS } from "../src/lib/service-catalog";
 
 const prisma = new PrismaClient();
 
@@ -16,7 +17,12 @@ async function main() {
 
   const company = await prisma.company.upsert({
     where: { slug: "demo-pest-control" },
-    update: { isDemo: true },
+    update: {
+      isDemo: true,
+      supportedPests: JSON.stringify(["general_pest", "fleas", "rodents", "other", "ants", "roaches", "termites", "bed_bugs", "spiders", "wasps"]),
+      pestCategoryConfig: JSON.stringify(DEFAULT_PEST_CATEGORIES),
+      serviceArrangements: JSON.stringify(SERVICE_ARRANGEMENTS),
+    },
     create: {
       name: "Demo Pest Control Co.",
       slug: "demo-pest-control",
@@ -24,6 +30,9 @@ async function main() {
       timezone: "America/Chicago",
       serviceZipCodes: JSON.stringify(["73301", "78701", "78702", "78703"]),
       supportedPests: JSON.stringify([
+        "general_pest",
+        "fleas",
+        "other",
         "ants",
         "roaches",
         "termites",
@@ -35,6 +44,8 @@ async function main() {
       businessHours: JSON.stringify(DEFAULT_BUSINESS_HOURS),
       inspectionDurationMinutes: 60,
       maxDailyInspections: 8,
+      pestCategoryConfig: JSON.stringify(DEFAULT_PEST_CATEGORIES),
+      serviceArrangements: JSON.stringify(SERVICE_ARRANGEMENTS),
       scoringRules: JSON.stringify(DEFAULT_SCORING_RULES),
       mqlThreshold: 40,
       sqlThreshold: 70,

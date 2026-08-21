@@ -28,6 +28,7 @@ import {
   recordAttributionTouch,
   recordFunnelEvent,
 } from "@/lib/analytics-events";
+import { parsePestCategories, pestCategoryForConcern } from "@/lib/service-catalog";
 
 const contactSchema = z.object({
   firstName: z.string().min(1).optional(),
@@ -106,6 +107,7 @@ async function saveLead(req: NextRequest) {
   const serviceZipCodes = parseServiceZipCodes(company);
   const supportedPests = parseSupportedPests(company);
   const scoringRules = parseScoringRules(company);
+  const pestCategories = parsePestCategories(company);
 
   let existing;
   if (leadId) {
@@ -269,6 +271,10 @@ async function saveLead(req: NextRequest) {
       typeof qualification.answers.pestType === "string"
         ? qualification.answers.pestType
         : null,
+    pestCategory: pestCategoryForConcern(
+      pestCategories,
+      typeof qualification.answers.pestType === "string" ? qualification.answers.pestType : null,
+    )?.id ?? null,
     hasExistingProvider:
       typeof qualification.answers.hasExistingProvider === "boolean"
         ? qualification.answers.hasExistingProvider
