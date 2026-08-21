@@ -5,12 +5,15 @@ import {
   QUALIFICATION_QUESTIONS,
   SWITCHER_DISCLAIMER,
   getNextQuestion,
+  parseStoredQualificationAnswers,
 } from "@/lib/qualification";
 import type { QualificationAnswers } from "@/lib/scoring";
 import { homeownerApiError, readJsonObject } from "@/lib/http-response";
 import {
   attributionFromLocation,
   getOrCreateVisitorId,
+  getStoredLeadId,
+  getStoredLeadToken,
   storeLeadId,
   storeLeadToken,
   track,
@@ -56,6 +59,92 @@ export default function InspectionFunnelPage() {
 
   useEffect(() => {
     void track("funnel_started");
+  }, []);
+
+  // A page refresh (or accidental back/forward navigation) must not discard
+  // in-progress qualification answers or silently start a second Lead row
+  // for the same visitor. src/lib/visitor.ts already persists leadId/
+  // leadToken to localStorage on every successful response; this restores
+  // component state from them on mount via a no-op resume call (empty
+  // `answers`, which validateQualificationSubmission already treats as
+  // "no new answers" and returns the prior answers unchanged). If the
+  // stored token is missing, expired (LEAD_TOKEN_TTL_MS), or the lead is
+  // gone, the API fails closed (403/404) and this fails silently — the
+  // funnel just proceeds as a normal first-time visit rather than showing
+  // a confusing technical error for something invisible to the homeowner.
+  useEffect(() => {
+    const storedLeadId = getStoredLeadId();
+    const storedLeadToken = getStoredLeadToken();
+    if (!storedLeadId || !storedLeadToken) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/leads", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            visitorId: getOrCreateVisitorId(),
+            leadId: storedLeadId,
+            leadToken: storedLeadToken,
+            answers: {},
+          }),
+        });
+        if (cancelled) return;
+        const data = await readJsonObject(res);
+        if (!res.ok || !data) return;
+        const returnedLead = data.lead;
+        if (
+          !returnedLead ||
+          typeof returnedLead !== "object" ||
+          !("id" in returnedLead) ||
+          typeof returnedLead.id !== "string"
+        ) {
+          return;
+        }
+        const leadToken = typeof data.leadToken === "string" ? data.leadToken : storedLeadToken;
+        const returnedClassification = "classification" in returnedLead ? returnedLead.classification : "prospect";
+        const classification =
+          returnedClassification === "mql" || returnedClassification === "sql" ? returnedClassification : "prospect";
+        setLead({
+          id: returnedLead.id,
+          token: leadToken,
+          classification,
+          inServiceArea: data.inServiceArea as boolean | null,
+          eligibleForBooking: data.eligibleForBooking === true,
+        });
+        storeLeadId(returnedLead.id);
+        storeLeadToken(leadToken);
+
+        const restoredAnswers = parseStoredQualificationAnswers(
+          "qualificationAnswers" in returnedLead && typeof returnedLead.qualificationAnswers === "string"
+            ? returnedLead.qualificationAnswers
+            : null,
+        );
+        if (Object.keys(restoredAnswers).length > 0) {
+          setAnswers(restoredAnswers);
+        }
+
+        const restoredEmail = "email" in returnedLead && typeof returnedLead.email === "string" ? returnedLead.email : "";
+        const restoredPhone = "phone" in returnedLead && typeof returnedLead.phone === "string" ? returnedLead.phone : "";
+        if (restoredEmail || restoredPhone) {
+          setContact({
+            firstName: "firstName" in returnedLead && typeof returnedLead.firstName === "string" ? returnedLead.firstName : "",
+            lastName: "lastName" in returnedLead && typeof returnedLead.lastName === "string" ? returnedLead.lastName : "",
+            email: restoredEmail,
+            phone: restoredPhone,
+          });
+        }
+
+        if (data.qualificationComplete) {
+          setStage("contact");
+        }
+      } catch {
+        // Fail silently — see comment above.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const question = useMemo(() => getNextQuestion(answers), [answers]);
