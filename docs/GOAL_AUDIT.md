@@ -391,8 +391,45 @@ work today; items 7+ build toward a safe production launch.
 11. **Decide and implement role enforcement** (`owner` vs `staff`) if any
     staff-facing action should actually be owner-only — currently a design
     decision left open, worth closing before a second staff account exists.
-12. **Extend `AuditLog` coverage** to appointment cancel/no-show/complete
-    and lead-score changes.
+12. ~~**Extend `AuditLog` coverage** to appointment cancel/no-show/
+    complete.~~ **DONE (2026-08-21, autonomous session)** — and along the
+    way found and fixed a second instance of the exact CRM-vs-API
+    duplication bug class that item 1 (cancellation) fixed at the very
+    start of this audit: `PATCH /api/appointments/[id]`'s `no_show` and
+    `complete` branches were each an independent, hand-duplicated copy of
+    the CRM server actions in `src/app/dashboard/leads/[id]/page.tsx`,
+    not just missing an audit log but — unlike the CRM — with **no guard
+    against acting on an appointment that wasn't currently `booked`**
+    (e.g. the API would silently let a caller mark an already-completed
+    or already-cancelled appointment as a no-show and re-run its side
+    effects). Fixed the same way item 1 was: extracted
+    `completeAppointmentAndLog()` and `markAppointmentNoShowAndLog()`
+    into `src/lib/appointment-actions.ts` (alongside the existing
+    `cancelAppointmentAndNotify()`), so the CRM and the API route call
+    one shared implementation each, both properly `status: "booked"`-
+    guarded and both audit-logged. The API route now returns a clean
+    `409 not_bookable` instead of a silent no-op or a raw 500. All four
+    mutations now write an `AuditLog` row: `appointment_cancelled`,
+    `appointment_completed`, `appointment_no_show`, and `outcome_change`
+    (won/lost, including the before/after outcome and, for wins, the
+    contract value). Verified against the real dev DB via direct Prisma
+    reads in `e2e/appointment-outcomes.spec.ts` — there is no read API or
+    CRM surface for `AuditLog` yet, so tests query the row directly, the
+    same pattern `e2e/postgresql-concurrency.spec.ts` uses; one scenario
+    specifically drives `PATCH /api/appointments/[id]` directly (not the
+    CRM button) for both actions, including asserting the new 409 on
+    reuse. Each new write/guard was sanity-checked by temporarily
+    breaking it (renaming the audit `action` string; removing the
+    `status: "booked"` filter) and confirming the corresponding test
+    fails, then reverted.
+    **Lead-score changes were not included**: there is currently no
+    manual score-edit feature in the CRM (score is read-only, computed
+    entirely from qualification answers), so there is no mutation for an
+    audit entry to cover yet — this becomes relevant only if/when a
+    manual override is added. **Also still open**: `AuditLog` rows are
+    write-only — nothing reads or displays them (no API route, no CRM
+    tab) — so this is now a real audit trail on disk, not yet a usable
+    one for the owner.
 13. ~~**Add a CI pipeline**~~ **IMPLEMENTED, pending first GitHub run.** The
     provider-neutral workflow verifies migrations, PostgreSQL/Redis behavior,
     typecheck, lint, Vitest, Playwright and production build without deploying.

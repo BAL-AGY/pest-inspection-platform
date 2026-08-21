@@ -12,7 +12,12 @@ import {
 import { requireSession } from "@/lib/require-session";
 import { MESSAGE_TEMPLATES } from "@/lib/communications";
 import { sendIfAllowed } from "@/lib/suppression";
-import { cancelAppointmentAndNotify } from "@/lib/appointment-actions";
+import {
+  AppointmentNotFoundError,
+  cancelAppointmentAndNotify,
+  completeAppointmentAndLog,
+  markAppointmentNoShowAndLog,
+} from "@/lib/appointment-actions";
 import { runSerializableTransaction } from "@/lib/serializable-transaction";
 import { attributionFromLead, recordFunnelEvent } from "@/lib/analytics-events";
 
@@ -199,20 +204,25 @@ export async function PATCH(
     return NextResponse.json({ appointment: updated });
   }
 
-  if (action === "no_show") {
-    const updated = await prisma.appointment.update({
-      where: { id },
-      data: { status: "no_show" },
-    });
-    return NextResponse.json({ appointment: updated });
-  }
+  // no_show / complete both only operate on a currently-booked appointment
+  // — the shared helpers throw AppointmentNotFoundError otherwise, which
+  // covers both "doesn't exist" and "already in a different status"
+  // (e.g. already completed/cancelled), matching the CRM's existing guard.
+  try {
+    if (action === "no_show") {
+      const updated = await markAppointmentNoShowAndLog(id, session.companyId);
+      return NextResponse.json({ appointment: updated });
+    }
 
-  // complete
-  const updated = await prisma.$transaction(async (tx) => {
-    const completed = await tx.appointment.update({ where: { id }, data: { status: "completed", completedAt: new Date() } });
-    await tx.lead.update({ where: { id: appointment.leadId }, data: { status: "inspection_completed" } });
-    await recordFunnelEvent({ companyId: session.companyId, leadId: appointment.leadId, appointmentId: appointment.id, visitorId: appointment.lead.visitorId ?? appointment.leadId, eventType: "inspection_completed", eventKey: `appointment:${appointment.id}:completed`, funnelStep: "completed", isDemo: appointment.lead.isDemo, attribution: attributionFromLead(appointment.lead) }, tx);
-    return completed;
-  });
-  return NextResponse.json({ appointment: updated });
+    const updated = await completeAppointmentAndLog(id, session.companyId);
+    return NextResponse.json({ appointment: updated });
+  } catch (err) {
+    if (err instanceof AppointmentNotFoundError) {
+      return NextResponse.json(
+        { error: "not_bookable", reason: "This appointment is no longer booked." },
+        { status: 409 },
+      );
+    }
+    throw err;
+  }
 }

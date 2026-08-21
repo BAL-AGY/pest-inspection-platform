@@ -332,9 +332,26 @@ before this audit.
       reschedule in place) implemented and documented — `docs/STATES.md`
 - [x] Status changes on the pipeline board persist via `PATCH
       /api/leads/[id]`, audit-logged
-- [ ] **(gap, prior)** `AuditLog` coverage is inconsistent — appointment
-      cancel/no-show/complete are not logged, only reschedule and Lead
-      status changes are
+- [x] **(fixed 2026-08-21 — autonomous session)** `AuditLog` coverage
+      extended to appointment cancel/no-show/complete and lead outcome
+      (won/lost) changes. Along the way, found and fixed a second
+      instance of the exact CRM-vs-API duplication bug already fixed for
+      cancellation above: `PATCH /api/appointments/[id]`'s `no_show`/
+      `complete` branches were independently hand-duplicated from the CRM
+      server actions, and — unlike the CRM — had no guard preventing them
+      from re-running on an appointment that was no longer `booked`.
+      Extracted `completeAppointmentAndLog`/`markAppointmentNoShowAndLog`
+      into `src/lib/appointment-actions.ts` alongside the existing
+      `cancelAppointmentAndNotify`, so both the CRM and the API route
+      share one guarded, audit-logged implementation each; the API now
+      returns `409 not_bookable` instead of silently no-op'ing or 500'ing.
+      Verified via direct Prisma reads in `e2e/appointment-outcomes.spec.ts`
+      (no read API/CRM surface for `AuditLog` exists yet, so tests query
+      the row directly) — one scenario drives the API route directly for
+      both actions, including the new 409-on-reuse behavior. Each
+      write/guard was sanity-checked by temporarily breaking it and
+      confirming the test fails, then reverted. See `docs/GOAL_AUDIT.md`
+      Critical Path item 12 for full detail.
 - [x] Booking/reschedule/cancel/complete lifecycle events are written
       idempotently with their authoritative state transaction. No-show remains
       current-state only and is used for show-rate reporting.

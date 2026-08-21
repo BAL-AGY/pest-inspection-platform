@@ -3,11 +3,11 @@ import { revalidatePath } from "next/cache";
 import { requireSession } from "@/lib/require-session";
 import { prisma } from "@/lib/prisma";
 import { LEAD_STATUSES } from "@/lib/pipeline";
-import { cancelAppointmentAndNotify } from "@/lib/appointment-actions";
+import { cancelAppointmentAndNotify, completeAppointmentAndLog, markAppointmentNoShowAndLog } from "@/lib/appointment-actions";
 import { parseCompanyTimeZone } from "@/lib/company";
 import { formatInCompanyTime } from "@/lib/timezone";
 import { QUALIFICATION_QUESTIONS, parseStoredQualificationAnswers } from "@/lib/qualification";
-import { attributionFromLead, clearRevenueEvent, recordCustomerOutcomeEvent, recordFunnelEvent, recordRevenueEvent } from "@/lib/analytics-events";
+import { attributionFromLead, clearRevenueEvent, recordCustomerOutcomeEvent, recordRevenueEvent } from "@/lib/analytics-events";
 import { formatPotentialValueRange, isServiceArrangement, parsePestCategories, parseServiceArrangements, pestCategoryForConcern, serviceArrangementLabel } from "@/lib/service-catalog";
 
 const EVENT_LABELS: Record<string, string> = {
@@ -131,6 +131,15 @@ export default async function LeadDetailPage({
     const value = contractValueCents ?? ownedLead.contractValueCents;
     if (outcome === "won" && value !== null) await recordRevenueEvent({ companyId: actionSession.companyId, leadId: id, visitorId: ownedLead.visitorId ?? id, amountCents: value, isDemo: ownedLead.isDemo, attribution: attributionFromLead(ownedLead) });
     if (outcome === "lost") await clearRevenueEvent(actionSession.companyId, id);
+    await prisma.auditLog.create({
+      data: {
+        companyId: actionSession.companyId,
+        action: "outcome_change",
+        entityType: "Lead",
+        entityId: id,
+        metadata: JSON.stringify({ from: ownedLead.outcome, to: outcome, contractValueCents: outcome === "won" ? value : null }),
+      },
+    });
     revalidatePath(`/dashboard/leads/${id}`);
   }
 
@@ -143,16 +152,7 @@ export default async function LeadDetailPage({
       where: { id: appointmentId, leadId: id, companyId: actionSession.companyId, status: "booked" },
     });
     if (!appointment) return;
-    const ownedLead = await prisma.lead.findFirst({ where: { id, companyId: actionSession.companyId } });
-    if (!ownedLead) return;
-    await prisma.$transaction(async (tx) => {
-      await tx.appointment.update({
-        where: { id: appointmentId },
-        data: { status: "completed", completedAt: new Date() },
-      });
-      await tx.lead.update({ where: { id }, data: { status: "inspection_completed" } });
-      await recordFunnelEvent({ companyId: actionSession.companyId, leadId: id, appointmentId, visitorId: ownedLead.visitorId ?? id, eventType: "inspection_completed", eventKey: `appointment:${appointmentId}:completed`, funnelStep: "completed", isDemo: ownedLead.isDemo, attribution: attributionFromLead(ownedLead) }, tx);
-    });
+    await completeAppointmentAndLog(appointmentId, actionSession.companyId);
     revalidatePath(`/dashboard/leads/${id}`);
   }
 
@@ -165,7 +165,7 @@ export default async function LeadDetailPage({
       where: { id: appointmentId, leadId: id, companyId: actionSession.companyId, status: "booked" },
     });
     if (!appointment) return;
-    await prisma.appointment.update({ where: { id: appointmentId }, data: { status: "no_show" } });
+    await markAppointmentNoShowAndLog(appointmentId, actionSession.companyId);
     revalidatePath(`/dashboard/leads/${id}`);
   }
 
