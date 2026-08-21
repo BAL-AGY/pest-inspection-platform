@@ -3,6 +3,7 @@
 const VISITOR_KEY = "pip_visitor_id";
 const LEAD_KEY = "pip_lead_id";
 const LEAD_TOKEN_KEY = "pip_lead_token";
+const ANALYTICS_SESSION_KEY = "pip_analytics_session";
 
 export function getOrCreateVisitorId(): string {
   if (typeof window === "undefined") return "";
@@ -40,12 +41,28 @@ export function storeLeadToken(token: string) {
   window.localStorage.setItem(LEAD_TOKEN_KEY, token);
 }
 
+export function getOrCreateAnalyticsSessionId(): string {
+  if (typeof window === "undefined") return "";
+  let id = window.sessionStorage.getItem(ANALYTICS_SESSION_KEY);
+  if (!id) {
+    id = crypto.randomUUID();
+    window.sessionStorage.setItem(ANALYTICS_SESSION_KEY, id);
+  }
+  return id;
+}
+
 export async function track(
   eventType: string,
-  opts: { leadId?: string | null; metadata?: Record<string, unknown> } = {},
+  opts: {
+    leadId?: string | null;
+    funnelStep?: string;
+    eventKey?: string;
+    metadata?: Record<string, unknown>;
+  } = {},
 ) {
   if (typeof window === "undefined") return;
   const visitorId = getOrCreateVisitorId();
+  const analyticsSessionId = getOrCreateAnalyticsSessionId();
   await fetch("/api/track", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -55,8 +72,13 @@ export async function track(
       url: window.location.href,
       referrer: document.referrer || null,
       leadId: opts.leadId ?? getStoredLeadId(),
+      leadToken: getStoredLeadToken(),
+      analyticsSessionId,
+      eventKey: opts.eventKey ?? `browser:${analyticsSessionId}:${eventType}`,
+      funnelStep: opts.funnelStep,
       metadata: opts.metadata,
     }),
+    keepalive: true,
   }).catch(() => {});
 }
 
@@ -72,5 +94,8 @@ export function attributionFromLocation() {
     landingPage: window.location.pathname,
     clickId:
       params.get("gclid") ?? params.get("fbclid") ?? params.get("msclkid") ?? null,
+    gclid: params.get("gclid"),
+    fbclid: params.get("fbclid"),
+    referrer: document.referrer ? new URL(document.referrer).host : null,
   };
 }

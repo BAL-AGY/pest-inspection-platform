@@ -92,15 +92,16 @@ test.describe("public API rate limiting", () => {
       const response = await request.post("/api/track", {
         data: {
           visitorId,
-          eventType: "visit",
+          eventType: "landing_page_view",
           url: "http://localhost:3000/?utm_source=rate-test",
+          analyticsSessionId: `rate-${i}`, eventKey: `view-${i}`,
         },
       });
       expect(response.status()).toBe(200);
     }
     const rowsBeforeLimitedRequest = await prisma.funnelEvent.count({ where: { visitorId } });
     const limited = await request.post("/api/track", {
-      data: { visitorId, eventType: "visit", url: "http://localhost:3000/" },
+      data: { visitorId, eventType: "landing_page_view", url: "http://localhost:3000/", analyticsSessionId: "limited", eventKey: "view" },
     });
     expect(limited.status()).toBe(429);
     expect(Number(limited.headers()["retry-after"])).toBeGreaterThan(0);

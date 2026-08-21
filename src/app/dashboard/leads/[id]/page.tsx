@@ -7,15 +7,16 @@ import { cancelAppointmentAndNotify } from "@/lib/appointment-actions";
 import { parseCompanyTimeZone } from "@/lib/company";
 import { formatInCompanyTime } from "@/lib/timezone";
 import { QUALIFICATION_QUESTIONS, parseStoredQualificationAnswers } from "@/lib/qualification";
+import { attributionFromLead, clearRevenueEvent, recordCustomerOutcomeEvent, recordFunnelEvent, recordRevenueEvent } from "@/lib/analytics-events";
 
 const EVENT_LABELS: Record<string, string> = {
   lead_created: "Lead created",
-  contact_captured: "Contact details captured",
-  mql: "Became marketing qualified (MQL)",
-  sql: "Became sales qualified (SQL)",
-  scheduler_viewed: "Viewed inspection availability",
-  appointment_booked: "Booked free home inspection",
-  appointment_completed: "Inspection completed",
+  contact_information_submitted: "Contact details captured",
+  lead_qualified: "Qualified lead",
+  lead_disqualified: "Lead did not qualify",
+  scheduling_viewed: "Viewed inspection availability",
+  inspection_booked: "Booked free home inspection",
+  inspection_completed: "Inspection completed",
   customer_won: "Customer won",
   customer_lost: "Customer lost",
 };
@@ -106,21 +107,14 @@ export default async function LeadDetailPage({
         ...(contractValueCents !== undefined ? { contractValueCents } : {}),
       },
     });
-    await prisma.funnelEvent.create({
-      data: {
-        companyId: actionSession.companyId,
-        leadId: id,
-        visitorId: ownedLead.visitorId ?? id,
-        eventType: outcome === "won" ? "customer_won" : "customer_lost",
-        source: ownedLead.source,
-        medium: ownedLead.medium,
-        campaign: ownedLead.campaign,
-        content: ownedLead.content,
-        term: ownedLead.term,
-        landingPage: ownedLead.landingPage,
-        clickId: ownedLead.clickId,
-      },
+    await recordCustomerOutcomeEvent({
+      companyId: actionSession.companyId, leadId: id, visitorId: ownedLead.visitorId ?? id,
+      outcome, isDemo: ownedLead.isDemo,
+      attribution: attributionFromLead(ownedLead),
     });
+    const value = contractValueCents ?? ownedLead.contractValueCents;
+    if (outcome === "won" && value !== null) await recordRevenueEvent({ companyId: actionSession.companyId, leadId: id, visitorId: ownedLead.visitorId ?? id, amountCents: value, isDemo: ownedLead.isDemo, attribution: attributionFromLead(ownedLead) });
+    if (outcome === "lost") await clearRevenueEvent(actionSession.companyId, id);
     revalidatePath(`/dashboard/leads/${id}`);
   }
 
@@ -135,28 +129,14 @@ export default async function LeadDetailPage({
     if (!appointment) return;
     const ownedLead = await prisma.lead.findFirst({ where: { id, companyId: actionSession.companyId } });
     if (!ownedLead) return;
-    await prisma.$transaction([
-      prisma.appointment.update({
+    await prisma.$transaction(async (tx) => {
+      await tx.appointment.update({
         where: { id: appointmentId },
         data: { status: "completed", completedAt: new Date() },
-      }),
-      prisma.lead.update({ where: { id }, data: { status: "inspection_completed" } }),
-      prisma.funnelEvent.create({
-        data: {
-          companyId: actionSession.companyId,
-          leadId: id,
-          visitorId: ownedLead.visitorId ?? id,
-          eventType: "appointment_completed",
-          source: ownedLead.source,
-          medium: ownedLead.medium,
-          campaign: ownedLead.campaign,
-          content: ownedLead.content,
-          term: ownedLead.term,
-          landingPage: ownedLead.landingPage,
-          clickId: ownedLead.clickId,
-        },
-      }),
-    ]);
+      });
+      await tx.lead.update({ where: { id }, data: { status: "inspection_completed" } });
+      await recordFunnelEvent({ companyId: actionSession.companyId, leadId: id, appointmentId, visitorId: ownedLead.visitorId ?? id, eventType: "inspection_completed", eventKey: `appointment:${appointmentId}:completed`, funnelStep: "completed", isDemo: ownedLead.isDemo, attribution: attributionFromLead(ownedLead) }, tx);
+    });
     revalidatePath(`/dashboard/leads/${id}`);
   }
 
@@ -234,10 +214,13 @@ export default async function LeadDetailPage({
       <section>
         <h2 className="text-sm font-semibold text-zinc-500 uppercase mb-2">Attribution</h2>
         <div className="bg-white border border-zinc-200 rounded-lg p-4 grid grid-cols-2 sm:grid-cols-3 gap-4 text-sm">
-          <div><p className="text-zinc-500">Source</p><p className="font-semibold">{lead.source ?? "direct"}</p></div>
-          <div><p className="text-zinc-500">Medium</p><p className="font-semibold">{lead.medium ?? "—"}</p></div>
-          <div><p className="text-zinc-500">Campaign</p><p className="font-semibold">{lead.campaign ?? "—"}</p></div>
-          <div className="col-span-2 sm:col-span-3"><p className="text-zinc-500">Landing page</p><p className="font-semibold break-all">{lead.landingPage ?? "—"}</p></div>
+          <div><p className="text-zinc-500">First-touch source</p><p className="font-semibold">{lead.source ?? "direct"}</p></div>
+          <div><p className="text-zinc-500">First-touch medium</p><p className="font-semibold">{lead.medium ?? "—"}</p></div>
+          <div><p className="text-zinc-500">First-touch campaign</p><p className="font-semibold">{lead.campaign ?? "—"}</p></div>
+          <div><p className="text-zinc-500">Last-touch source</p><p className="font-semibold">{lead.lastSource ?? lead.source ?? "direct"}</p></div>
+          <div><p className="text-zinc-500">Last-touch medium</p><p className="font-semibold">{lead.lastMedium ?? lead.medium ?? "—"}</p></div>
+          <div><p className="text-zinc-500">Last-touch campaign</p><p className="font-semibold">{lead.lastCampaign ?? lead.campaign ?? "—"}</p></div>
+          <div className="col-span-2 sm:col-span-3"><p className="text-zinc-500">First landing page</p><p className="font-semibold break-all">{lead.landingPage ?? "—"}</p></div>
         </div>
       </section>
 

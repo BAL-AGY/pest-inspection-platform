@@ -17,10 +17,11 @@ datasource db {
 // ---------------------------------------------------------------------------
 
 model Company {
-  id       String @id @default(cuid())
+  id       String  @id @default(cuid())
   name     String
-  slug     String @unique
-  timezone String @default("America/Chicago")
+  slug     String  @unique
+  timezone String  @default("America/Chicago")
+  isDemo   Boolean @default(false)
 
   // Service area / operations config
   serviceZipCodes           String // JSON-encoded string[] of ZIP codes served
@@ -52,6 +53,7 @@ model Company {
   communications                Communication[]
   communicationProviderAccounts CommunicationProviderAccount[]
   communicationWebhookEvents    CommunicationWebhookEvent[]
+  visitorAttributions           VisitorAttribution[]
 }
 
 // ---------------------------------------------------------------------------
@@ -95,6 +97,7 @@ model Lead {
   id        String  @id @default(cuid())
   companyId String
   company   Company @relation(fields: [companyId], references: [id])
+  isDemo    Boolean @default(false)
 
   // Contact
   firstName       String?
@@ -135,14 +138,28 @@ model Lead {
   contractValueCents Int?
 
   // Attribution (first-touch, captured at first FunnelEvent)
-  source      String?
-  medium      String?
-  campaign    String?
-  content     String?
-  term        String?
-  landingPage String?
-  clickId     String?
-  visitorId   String? // anonymous id set pre-identification, links to FunnelEvents
+  source          String?
+  medium          String?
+  campaign        String?
+  content         String?
+  term            String?
+  landingPage     String?
+  clickId         String?
+  gclid           String?
+  fbclid          String?
+  referrer        String?
+  lastSource      String?
+  lastMedium      String?
+  lastCampaign    String?
+  lastContent     String?
+  lastTerm        String?
+  lastLandingPage String?
+  lastGclid       String?
+  lastFbclid      String?
+  lastReferrer    String?
+  firstTouchAt    DateTime? @db.Timestamptz(3)
+  lastTouchAt     DateTime? @db.Timestamptz(3)
+  visitorId       String? // anonymous id set pre-identification, links to FunnelEvents
 
   // Communications consent (TCPA/CAN-SPAM boundaries)
   smsConsent                  Boolean   @default(false)
@@ -189,17 +206,21 @@ model LeadNote {
 // ---------------------------------------------------------------------------
 
 model FunnelEvent {
-  id        String  @id @default(cuid())
-  companyId String
-  company   Company @relation(fields: [companyId], references: [id])
-  leadId    String?
-  lead      Lead?   @relation(fields: [leadId], references: [id])
-  visitorId String
+  id            String       @id @default(cuid())
+  companyId     String
+  company       Company      @relation(fields: [companyId], references: [id])
+  leadId        String?
+  lead          Lead?        @relation(fields: [leadId], references: [id])
+  visitorId     String
+  appointmentId String?
+  appointment   Appointment? @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
+  eventKey      String       @default(cuid())
+  funnelStep    String?
+  isDemo        Boolean      @default(false)
 
   eventType String
-  // "visit" | "assessment_start" | "contact_captured" | "lead_created" |
-  // "mql" | "sql" | "scheduler_viewed" | "appointment_booked" |
-  // "appointment_completed" | "customer_won" | "customer_lost"
+  // Canonical values live in src/lib/pipeline.ts. Public browsers may write
+  // only non-authoritative interaction events; conversions are server-only.
 
   // Attribution captured at the event (first touch persisted on Lead;
   // every event keeps its own for full-path analysis later)
@@ -210,12 +231,51 @@ model FunnelEvent {
   term        String?
   landingPage String?
   clickId     String?
+  gclid       String?
+  fbclid      String?
+  referrer    String?
 
   metadata  String? // JSON-encoded event-specific payload
   createdAt DateTime @default(now()) @db.Timestamptz(3)
 
+  @@unique([companyId, eventKey])
   @@index([companyId, eventType])
+  @@index([companyId, createdAt])
+  @@index([appointmentId])
   @@index([visitorId])
+}
+
+model VisitorAttribution {
+  id        String  @id @default(cuid())
+  companyId String
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  visitorId String
+  isDemo    Boolean @default(false)
+
+  firstSource      String?
+  firstMedium      String?
+  firstCampaign    String?
+  firstContent     String?
+  firstTerm        String?
+  firstLandingPage String?
+  firstGclid       String?
+  firstFbclid      String?
+  firstReferrer    String?
+  firstTouchedAt   DateTime @db.Timestamptz(3)
+
+  lastSource      String?
+  lastMedium      String?
+  lastCampaign    String?
+  lastContent     String?
+  lastTerm        String?
+  lastLandingPage String?
+  lastGclid       String?
+  lastFbclid      String?
+  lastReferrer    String?
+  lastTouchedAt   DateTime @db.Timestamptz(3)
+
+  @@unique([companyId, visitorId])
+  @@index([companyId, lastTouchedAt])
 }
 
 // ---------------------------------------------------------------------------
@@ -228,6 +288,7 @@ model Appointment {
   company     Company    @relation(fields: [companyId], references: [id])
   leadId      String
   lead        Lead       @relation(fields: [leadId], references: [id])
+  isDemo      Boolean    @default(false)
   inspectorId String?
   inspector   Inspector? @relation(fields: [inspectorId], references: [id])
 
@@ -245,6 +306,7 @@ model Appointment {
   updatedAt DateTime @updatedAt @db.Timestamptz(3)
 
   communications Communication[]
+  funnelEvents   FunnelEvent[]
 
   // The double-booking guard is a PARTIAL unique index on
   // (companyId, scheduledStart) WHERE status IN ('booked', 'rescheduled'),
@@ -276,10 +338,13 @@ model MarketingSpend {
   companyId   String
   company     Company  @relation(fields: [companyId], references: [id])
   source      String
+  medium      String?
   campaign    String?
+  content     String?
   periodStart DateTime @db.Timestamptz(3)
   periodEnd   DateTime @db.Timestamptz(3)
   amountCents Int
+  isDemo      Boolean  @default(false)
 
   createdAt DateTime @default(now()) @db.Timestamptz(3)
 

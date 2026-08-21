@@ -15,9 +15,10 @@ answers. The expanded browser journey verifies landing UTM preservation,
 qualification, booking/confirmation, owner login, readable qualification and
 attribution detail, calendar linkage, notes, completion, outcome, and dashboard
 updates. Lead-detail Server Actions reauthenticate and reassert tenant/lead/
-appointment ownership before writes. Full verification: 136/136 Vitest and
-37/37 Playwright tests, typecheck, lint, PostgreSQL/Redis coverage, and
-production build.
+appointment ownership before writes. The analytics checkpoint's final full
+verification is 144/144 Vitest and 42/42 Playwright tests, plus typecheck,
+lint, empty-PostgreSQL migration/seed, Redis coverage, production build, and
+`git diff --check`.
 
 **Demo economics and attribution:** Dashboard metrics now include combined
 qualified leads, lead-to-qualified and qualified-to-booked conversion, cost per
@@ -25,7 +26,17 @@ qualified lead, attendance-outcome show rate, close rate, CAC, ROAS, ROI, and a
 source/campaign table covering leads → qualified → booked → won → attributed
 contract value. Counts are unique by Lead where appropriate, so repeated events
 or appointments do not inflate source performance. The landing CTA preserves
-UTMs, and tracking associates a `leadId` only when its company/visitor match.
+UTMs, and tracking associates a `leadId` only when company/visitor and the
+lead-ownership capability all match.
+
+**2026-08-21 production analytics checkpoint:** The canonical, idempotent event
+log now covers landing/CTA/start, each validated qualification step, contact,
+qualification outcome, scheduling, booking lifecycle, customer outcome, and
+actual revenue. First and last attribution persist from anonymous visitor to
+lead/outcome. Company-timezone ranges, question drop-off, source/medium/campaign/
+creative economics, explicit unavailable values, tenant/demo isolation, and a
+redesigned owner overview are implemented and covered by PostgreSQL-backed and
+browser tests. See `docs/ANALYTICS.md` and `docs/EVENTS.md`.
 
 **2026-08-20 full-goal audit**: `npm run test` (51/51), `npx tsc --noEmit`
 (0 errors), `npm run lint` (0 errors), `npm run build` (succeeds, all 19
@@ -179,9 +190,8 @@ before this audit.
 - [x] Existing-provider/switcher path with non-contract-interference
       disclaimer
 - [x] Contact capture wired into lead creation/update
-- [ ] **(gap, prior)** `assessment_step_completed` / `cta_clicked` event
-      instrumentation — only `assessment_start` is tracked; per-question
-      drop-off inside the funnel isn't measurable — `docs/EVENTS.md`
+- [x] CTA, funnel-start, and authoritative per-question instrumentation with
+      question-level drop-off reporting — `docs/EVENTS.md`
 - [x] **(fixed — Step 19)** Server-authoritative qualification validation.
       `src/lib/qualification.ts` centrally declares question IDs, types,
       required/conditional behavior, option values, ZIP validation,
@@ -293,10 +303,9 @@ before this audit.
 - [ ] **(gap, prior)** `AuditLog` coverage is inconsistent — appointment
       cancel/no-show/complete are not logged, only reschedule and Lead
       status changes are
-- [ ] **(gap, prior)** `inspection_rescheduled`/`inspection_cancelled`/
-      `inspection_no_show` are not written to the `FunnelEvent` log —
-      `Appointment.status` is correct but these transitions are invisible
-      to funnel analytics — `docs/EVENTS.md`
+- [x] Booking/reschedule/cancel/complete lifecycle events are written
+      idempotently with their authoritative state transaction. No-show remains
+      current-state only and is used for show-rate reporting.
 
 ## 10. Dashboard
 
@@ -307,19 +316,18 @@ before this audit.
       conceptually via responsive classes — not yet checked on a real
       device)
 - [x] Calendar (day/week/month range views)
-- [ ] Source/campaign breakdown UI on the dashboard (API exists at
-      `/api/analytics/funnel`; no dashboard page renders it yet)
+- [x] Source/medium/campaign/content performance UI with spend, all conversion
+      stages, revenue, cost metrics, CAC, ROAS, and ROI
 
 ## 11. Attribution
 
-- [x] Append-only funnel event log (visit → … → customer won/lost)
+- [x] Idempotent funnel event log (landing view → … → revenue recorded)
 - [x] First-touch attribution persisted on Lead; per-event attribution
       column exists on FunnelEvent
 - [x] Full event taxonomy and firing-site documentation — `docs/EVENTS.md`
-- [ ] **(gap, prior)** Only the two client-fired events (`visit`,
-      `assessment_start`) resolve attribution fresh per hit; server-fired
-      events inherit the lead's first-touch attribution or carry none —
-      true multi-touch/last-touch attribution isn't derivable today
+- [x] Durable first- and last-touch visitor attribution; direct/internal returns
+      do not erase a campaign, and server conversion events inherit the lead's
+      authoritative last-touch snapshot
 
 ## 12. Analytics
 
@@ -336,6 +344,10 @@ before this audit.
       qualified lead, CAC, attributed contract value, ROAS, and ROI
 - [x] Source/campaign performance UI with unique-Lead counts through qualified,
       booked, won, and contract-value stages
+- [x] Company-timezone Today/7-day/30-day/custom date ranges and authoritative
+      question-by-question reached/completed/abandoned reporting
+- [x] Explicit demo-data mode and dashboard indicator; analytics queries never
+      mix demo and production rows
 
 ## 13. Communications
 

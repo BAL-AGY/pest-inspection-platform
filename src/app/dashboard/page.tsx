@@ -1,150 +1,34 @@
 import { redirect } from "next/navigation";
+import Link from "next/link";
 import { requireSession } from "@/lib/require-session";
 import { getDashboardMetrics } from "@/lib/dashboard-metrics";
+import { QUALIFICATION_QUESTIONS } from "@/lib/qualification";
 
-function fmtCents(cents: number | null): string {
-  if (cents === null) return "No data yet";
-  return `$${(cents / 100).toFixed(2)}`;
-}
-function fmtPct(rate: number | null): string {
-  if (rate === null) return "No data yet";
-  return `${(rate * 100).toFixed(0)}%`;
+const money = (value: number | null) => value === null ? "Unavailable" : `$${(value / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const percent = (value: number | null) => value === null ? "Unavailable" : `${(value * 100).toFixed(0)}%`;
+function Stat({ label, value, accent = false }: { label: string; value: string | number; accent?: boolean }) {
+  return <div className={`rounded-xl border p-4 ${accent ? "border-emerald-200 bg-emerald-50" : "border-zinc-200 bg-white"}`}><p className="text-xs font-medium uppercase tracking-wide text-zinc-500">{label}</p><p className="mt-1 text-2xl font-bold">{value}</p></div>;
 }
 
-function Stat({ label, value }: { label: string; value: string | number }) {
-  return (
-    <div className="bg-white border border-zinc-200 rounded-lg p-4">
-      <p className="text-sm text-zinc-500">{label}</p>
-      <p className="text-2xl font-bold mt-1">{value}</p>
+export default async function DashboardOverviewPage({ searchParams }: { searchParams: Promise<{ range?: string; start?: string; end?: string }> }) {
+  const session = await requireSession(); if (!session) redirect("/login");
+  const query = await searchParams;
+  const m = await getDashboardMetrics(session.companyId, { preset: query.range, start: query.start, end: query.end });
+  return <div className="flex flex-col gap-8">
+    <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+      <div><div className="flex items-center gap-3"><h1 className="text-2xl font-bold">Acquisition overview</h1>{m.isDemo && <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-bold text-amber-800">DEMO DATA</span>}</div><p className="mt-1 text-sm text-zinc-500">North star: cost per qualified booked inspection — <strong>{money(m.costMetrics.costPerBookedInspectionCents)}</strong></p><p className="text-xs text-zinc-400">Company-local reporting in {m.timeZone}. Spend entries are not estimated or prorated.</p></div>
+      <div className="flex flex-wrap gap-2 text-sm">{[["today","Today"],["7d","Last 7 days"],["30d","Last 30 days"]].map(([key,label]) => <Link key={key} href={`/dashboard?range=${key}`} className={`rounded-lg border px-3 py-2 ${m.range.preset === key ? "border-emerald-700 bg-emerald-700 text-white" : "border-zinc-300 bg-white"}`}>{label}</Link>)}</div>
     </div>
-  );
-}
+    <form className="flex flex-wrap items-end gap-2 rounded-lg border border-zinc-200 bg-white p-3" action="/dashboard"><input type="hidden" name="range" value="custom"/><label className="text-xs text-zinc-500">From<input className="ml-2 rounded border px-2 py-1.5" type="date" name="start" defaultValue={m.range.startKey}/></label><label className="text-xs text-zinc-500">To<input className="ml-2 rounded border px-2 py-1.5" type="date" name="end" defaultValue={m.range.endKey}/></label><button className="rounded bg-zinc-900 px-3 py-2 text-xs font-semibold text-white">Apply custom range</button></form>
 
-export default async function DashboardOverviewPage() {
-  const session = await requireSession();
-  if (!session) redirect("/login");
+    <section><h2 className="mb-3 text-sm font-semibold uppercase text-zinc-500">Business outcome</h2><div className="grid grid-cols-2 gap-3 lg:grid-cols-6"><Stat label="Marketing spend" value={money(m.marketingSpendCents)}/><Stat label="Leads" value={m.newLeads}/><Stat label="Qualified leads" value={m.qualifiedCount}/><Stat label="Booked inspections" value={m.bookedCount} accent/><Stat label="Customers won" value={m.customersWon}/><Stat label="Revenue attributed" value={money(m.revenueCents)} accent/></div></section>
+    <section><h2 className="mb-3 text-sm font-semibold uppercase text-zinc-500">Marketing efficiency</h2><div className="grid grid-cols-2 gap-3 lg:grid-cols-6"><Stat label="Cost per lead" value={money(m.costMetrics.costPerLeadCents)}/><Stat label="Cost per qualified lead" value={money(m.costMetrics.costPerQualifiedLeadCents)}/><Stat label="Cost per booked inspection" value={money(m.costMetrics.costPerBookedInspectionCents)} accent/><Stat label="Customer acquisition cost" value={money(m.cac)}/><Stat label="ROAS" value={m.roas === null ? "Unavailable" : `${m.roas.toFixed(2)}x`}/><Stat label="ROI" value={percent(m.roi)}/></div></section>
 
-  const m = await getDashboardMetrics(session.companyId);
+    <section><h2 className="mb-3 text-sm font-semibold uppercase text-zinc-500">Conversion funnel</h2><div className="grid gap-2 md:grid-cols-7">{m.funnelStages.map((stage, index) => <div key={stage.key} className="relative rounded-lg border border-zinc-200 bg-white p-3 text-center"><p className="text-xs text-zinc-500">{stage.label}</p><p className="text-2xl font-bold">{stage.count}</p>{index > 0 && <p className="text-xs font-medium text-emerald-700">{percent(stage.conversionFromPrevious)}</p>}</div>)}</div></section>
 
-  return (
-    <div className="flex flex-col gap-8">
-      <div>
-        <h1 className="text-2xl font-bold">Overview</h1>
-        <p className="text-zinc-500 text-sm mt-1">
-          North star: cost per qualified booked inspection —{" "}
-          <strong>{fmtCents(m.costMetrics.costPerBookedInspectionCents)}</strong>
-        </p>
-      </div>
+    <section><h2 className="mb-3 text-sm font-semibold uppercase text-zinc-500">Funnel drop-off</h2><div className="overflow-hidden rounded-lg border border-zinc-200 bg-white"><div className="grid grid-cols-4 border-b bg-zinc-50 px-4 py-2 text-xs font-semibold text-zinc-500"><span>Step</span><span>Reached</span><span>Completed</span><span>Abandoned</span></div>{m.questionDropOff.map((row) => <div key={row.key} className="grid grid-cols-4 border-b px-4 py-2 text-sm last:border-0"><span>{row.key === "contact" ? "Contact information" : QUALIFICATION_QUESTIONS.find((q) => q.id === row.key)?.prompt ?? row.key}</span><span>{row.reached}</span><span>{row.completed} ({percent(row.conversion)})</span><span className={row.abandoned ? "text-rose-700" : ""}>{row.abandoned}</span></div>)}</div></section>
 
-      <section>
-        <h2 className="text-sm font-semibold text-zinc-500 uppercase mb-3">Inspections</h2>
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          <Stat label="Booked today" value={m.inspectionsToday} />
-          <Stat label="Booked this week" value={m.inspectionsThisWeek} />
-          <Stat label="Completed" value={m.completedInspections} />
-          <Stat label="Show rate" value={fmtPct(m.showRate)} />
-        </div>
-      </section>
-
-      <section>
-        <h2 className="text-sm font-semibold text-zinc-500 uppercase mb-3">Funnel</h2>
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          <Stat label="New leads" value={m.newLeads} />
-          <Stat label="MQLs" value={m.mqlCount} />
-          <Stat label="SQLs" value={m.sqlCount} />
-          <Stat label="Booked inspections" value={m.bookedCount} />
-          <Stat label="Qualified leads" value={m.qualifiedCount} />
-          <Stat label="Lead to qualified" value={fmtPct(m.leadToQualifiedRate)} />
-          <Stat label="Qualified to booked" value={fmtPct(m.qualifiedToBookedRate)} />
-        </div>
-      </section>
-
-      <section>
-        <h2 className="text-sm font-semibold text-zinc-500 uppercase mb-3">Outcomes</h2>
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          <Stat label="Customers won" value={m.customersWon} />
-          <Stat label="Customers lost" value={m.customersLost} />
-          <Stat label="Close rate" value={fmtPct(m.closeRate)} />
-          <Stat label="Revenue attributed" value={fmtCents(m.revenueCents)} />
-        </div>
-      </section>
-
-      <section>
-        <h2 className="text-sm font-semibold text-zinc-500 uppercase mb-3">
-          Marketing economics
-        </h2>
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          <Stat label="Marketing spend" value={fmtCents(m.marketingSpendCents)} />
-          <Stat label="Cost per lead" value={fmtCents(m.costMetrics.costPerLeadCents)} />
-          <Stat label="Cost per qualified lead" value={fmtCents(m.costMetrics.costPerQualifiedLeadCents)} />
-          <Stat label="Cost per SQL" value={fmtCents(m.costMetrics.costPerSqlCents)} />
-          <Stat
-            label="Cost per booked inspection"
-            value={fmtCents(m.costMetrics.costPerBookedInspectionCents)}
-          />
-          <Stat label="Customer acquisition cost" value={fmtCents(m.cac)} />
-          <Stat label="Return on ad spend" value={m.roas === null ? "No data yet" : `${m.roas.toFixed(2)}x`} />
-          <Stat label="ROI" value={fmtPct(m.roi)} />
-        </div>
-        {m.marketingSpendCents === null && (
-          <p className="text-sm text-zinc-500 mt-2">
-            Enter marketing spend under Marketing to see real cost-per-lead figures.
-          </p>
-        )}
-      </section>
-
-      <section>
-        <h2 className="text-sm font-semibold text-zinc-500 uppercase mb-3">
-          Source and campaign performance
-        </h2>
-        <div className="overflow-x-auto bg-white border border-zinc-200 rounded-lg">
-          <table className="w-full text-sm">
-            <thead className="text-left text-zinc-500 border-b border-zinc-200">
-              <tr>
-                <th className="px-4 py-3">Source / campaign</th>
-                <th className="px-3 py-3">Leads</th>
-                <th className="px-3 py-3">Qualified</th>
-                <th className="px-3 py-3">Booked</th>
-                <th className="px-3 py-3">Won</th>
-                <th className="px-4 py-3">Contract value</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-zinc-100">
-              {m.attributionBreakdown.map((row) => (
-                <tr key={`${row.source}:${row.campaign}`}>
-                  <td className="px-4 py-3 font-medium">{row.source} / {row.campaign}</td>
-                  <td className="px-3 py-3">{row.leads}</td>
-                  <td className="px-3 py-3">{row.qualified}</td>
-                  <td className="px-3 py-3">{row.booked}</td>
-                  <td className="px-3 py-3">{row.won}</td>
-                  <td className="px-4 py-3">{fmtCents(row.contractValueCents)}</td>
-                </tr>
-              ))}
-              {m.attributionBreakdown.length === 0 && (
-                <tr><td className="px-4 py-4 text-zinc-500" colSpan={6}>No attributed leads yet.</td></tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      <section>
-        <h2 className="text-sm font-semibold text-zinc-500 uppercase mb-3">
-          Funnel drop-off
-        </h2>
-        <div className="bg-white border border-zinc-200 rounded-lg divide-y divide-zinc-100">
-          {m.stageRates.map((r) => (
-            <div key={`${r.from}-${r.to}`} className="flex justify-between px-4 py-3 text-sm">
-              <span className="text-zinc-600">
-                {r.from} → {r.to}
-              </span>
-              <span className="font-medium">
-                {r.rate === null ? "No data yet" : `${(r.rate * 100).toFixed(0)}% converted`}
-              </span>
-            </div>
-          ))}
-        </div>
-      </section>
-    </div>
-  );
+    <section><h2 className="mb-3 text-sm font-semibold uppercase text-zinc-500">Marketing performance · event attribution</h2><div className="overflow-x-auto rounded-lg border border-zinc-200 bg-white"><table className="w-full text-sm"><thead className="border-b bg-zinc-50 text-left text-zinc-500"><tr>{["Source / medium","Campaign / creative","Spend","Visitors","Leads","Qualified","Booked","Completed","Customers","Revenue","CPL","CP booked","CAC","ROAS"].map((h) => <th key={h} className="whitespace-nowrap px-3 py-3">{h}</th>)}</tr></thead><tbody className="divide-y">{m.marketingPerformance.map((row) => <tr key={`${row.source}:${row.medium}:${row.campaign}:${row.content}`}><td className="whitespace-nowrap px-3 py-3 font-medium">{row.source} / {row.medium}</td><td className="whitespace-nowrap px-3 py-3">{row.campaign} / {row.content}</td><td className="px-3">{money(row.spendCents)}</td><td className="px-3">{row.visitors}</td><td className="px-3">{row.leads}</td><td className="px-3">{row.qualified}</td><td className="px-3">{row.booked}</td><td className="px-3">{row.completed}</td><td className="px-3">{row.customers}</td><td className="px-3">{money(row.revenueCents)}</td><td className="px-3">{money(row.costPerLeadCents)}</td><td className="px-3">{money(row.costPerBookedInspectionCents)}</td><td className="px-3">{money(row.cac)}</td><td className="px-3">{row.roas === null ? "Unavailable" : `${row.roas.toFixed(2)}x`}</td></tr>)}{m.marketingPerformance.length === 0 && <tr><td colSpan={14} className="p-5 text-zinc-500">No funnel activity in this range.</td></tr>}</tbody></table></div></section>
+    <section><h2 className="mb-3 text-sm font-semibold uppercase text-zinc-500">Operations and conversion</h2><div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-6"><Stat label="Booked today" value={m.inspectionsToday}/><Stat label="Booked this week" value={m.inspectionsThisWeek}/><Stat label="Lead to qualified" value={percent(m.leadToQualifiedRate)}/><Stat label="Qualified to booked" value={percent(m.qualifiedToBookedRate)}/><Stat label="Show rate" value={percent(m.showRate)}/><Stat label="Close rate" value={percent(m.closeRate)}/></div></section>
+  </div>;
 }

@@ -1,31 +1,15 @@
-import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { NextRequest, NextResponse } from "next/server";
 import { requireSession } from "@/lib/require-session";
-import { computeFunnelCounts, computeStageConversionRates } from "@/lib/analytics";
+import { getDashboardMetrics } from "@/lib/dashboard-metrics";
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   const session = await requireSession();
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const events = await prisma.funnelEvent.findMany({
-    where: { companyId: session.companyId },
-    select: { eventType: true, source: true, campaign: true },
+  const metrics = await getDashboardMetrics(session.companyId, {
+    preset: req.nextUrl.searchParams.get("range") ?? undefined,
+    start: req.nextUrl.searchParams.get("start") ?? undefined,
+    end: req.nextUrl.searchParams.get("end") ?? undefined,
   });
-
-  const overall = computeFunnelCounts(events);
-  const overallRates = computeStageConversionRates(overall);
-
-  const bySource = new Map<string, { eventType: string }[]>();
-  for (const e of events) {
-    const key = e.source ?? "unknown";
-    if (!bySource.has(key)) bySource.set(key, []);
-    bySource.get(key)!.push(e);
-  }
-
-  const sourceBreakdown = Array.from(bySource.entries()).map(([source, sourceEvents]) => ({
-    source,
-    counts: computeFunnelCounts(sourceEvents),
-  }));
-
-  return NextResponse.json({ overall, overallRates, sourceBreakdown });
+  return NextResponse.json({ range: metrics.range, funnel: metrics.funnelStages, dropOff: metrics.questionDropOff, marketingPerformance: metrics.marketingPerformance });
 }

@@ -1,6 +1,7 @@
 import { prisma } from "./prisma";
 import { MESSAGE_TEMPLATES } from "./communications";
 import { sendIfAllowed } from "./suppression";
+import { attributionFromLead, recordFunnelEvent } from "./analytics-events";
 
 export class AppointmentNotFoundError extends Error {
   constructor() {
@@ -23,26 +24,24 @@ export async function cancelAppointmentAndNotify(appointmentId: string, companyI
   });
   if (!appointment) throw new AppointmentNotFoundError();
 
-  const updated = await prisma.appointment.update({
-    where: { id: appointmentId },
-    data: { status: "cancelled", cancelledAt: new Date() },
-  });
-
-  const otherActive = await prisma.appointment.count({
+  const updated = await prisma.$transaction(async (tx) => {
+    const cancelled = await tx.appointment.update({ where: { id: appointmentId }, data: { status: "cancelled", cancelledAt: new Date() } });
+    await recordFunnelEvent({ companyId, leadId: appointment.leadId, appointmentId: appointment.id, visitorId: appointment.lead.visitorId ?? appointment.leadId, eventType: "inspection_cancelled", eventKey: `appointment:${appointment.id}:cancelled`, funnelStep: "cancelled", isDemo: appointment.lead.isDemo, attribution: attributionFromLead(appointment.lead) }, tx);
+    const otherActive = await tx.appointment.count({
     where: {
       leadId: appointment.leadId,
       status: { in: ["booked", "rescheduled"] },
       id: { not: appointmentId },
     },
-  });
-  if (otherActive === 0) {
-    await prisma.lead.update({
+    });
+    if (otherActive === 0) await tx.lead.update({
       where: { id: appointment.leadId },
       data: {
         status: appointment.lead.classification === "sql" ? "sql" : appointment.lead.status,
       },
     });
-  }
+    return cancelled;
+  });
 
   if (appointment.lead.email) {
     await sendIfAllowed(

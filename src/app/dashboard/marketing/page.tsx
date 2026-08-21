@@ -2,13 +2,17 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { requireSession } from "@/lib/require-session";
 import { prisma } from "@/lib/prisma";
+import { parseCompanyTimeZone } from "@/lib/company";
+import { companyDayRange, formatInCompanyTime } from "@/lib/timezone";
 
 export default async function MarketingPage() {
   const session = await requireSession();
   if (!session) redirect("/login");
+  const company = await prisma.company.findUniqueOrThrow({ where: { id: session.companyId } });
+  const timeZone = parseCompanyTimeZone(company);
 
   const entries = await prisma.marketingSpend.findMany({
-    where: { companyId: session.companyId },
+    where: { companyId: session.companyId, isDemo: company.isDemo },
     orderBy: { periodStart: "desc" },
   });
 
@@ -16,11 +20,13 @@ export default async function MarketingPage() {
     "use server";
     const source = String(formData.get("source") ?? "").trim();
     const campaign = String(formData.get("campaign") ?? "").trim();
+    const medium = String(formData.get("medium") ?? "").trim();
+    const content = String(formData.get("content") ?? "").trim();
     const periodStart = String(formData.get("periodStart"));
     const periodEnd = String(formData.get("periodEnd"));
     const amount = Number(formData.get("amount"));
-    const start = new Date(periodStart);
-    const end = new Date(periodEnd);
+    let start: Date; let end: Date;
+    try { start = companyDayRange(periodStart, timeZone).start; end = companyDayRange(periodEnd, timeZone).end; } catch { return; }
     if (
       !source ||
       source.length > 100 ||
@@ -35,8 +41,11 @@ export default async function MarketingPage() {
     await prisma.marketingSpend.create({
       data: {
         companyId: session!.companyId,
+        isDemo: company.isDemo,
         source,
+        medium: medium || null,
         campaign: campaign || null,
+        content: content || null,
         periodStart: start,
         periodEnd: end,
         amountCents: Math.round(amount * 100),
@@ -56,7 +65,9 @@ export default async function MarketingPage() {
 
       <form action={addSpend} className="bg-white border border-zinc-200 rounded-lg p-4 grid grid-cols-2 gap-3">
         <input name="source" required placeholder="Source (e.g. google, facebook)" className="border border-zinc-300 rounded px-3 py-2 text-sm col-span-2" />
+        <input name="medium" placeholder="Medium (optional, e.g. cpc)" className="border border-zinc-300 rounded px-3 py-2 text-sm col-span-2" />
         <input name="campaign" placeholder="Campaign (optional)" className="border border-zinc-300 rounded px-3 py-2 text-sm col-span-2" />
+        <input name="content" placeholder="Creative/content (optional)" className="border border-zinc-300 rounded px-3 py-2 text-sm col-span-2" />
         <label className="text-xs text-zinc-500 flex flex-col gap-1">
           Period start
           <input name="periodStart" type="date" required className="border border-zinc-300 rounded px-3 py-2 text-sm" />
@@ -84,7 +95,7 @@ export default async function MarketingPage() {
                 {e.campaign ? ` — ${e.campaign}` : ""}
               </p>
               <p className="text-zinc-500 text-xs">
-                {new Date(e.periodStart).toLocaleDateString()} – {new Date(e.periodEnd).toLocaleDateString()}
+                {formatInCompanyTime(e.periodStart, timeZone, { dateStyle: "medium" })} – {formatInCompanyTime(new Date(e.periodEnd.getTime() - 1), timeZone, { dateStyle: "medium" })}
               </p>
             </div>
             <span className="font-semibold">${(e.amountCents / 100).toFixed(2)}</span>

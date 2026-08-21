@@ -122,7 +122,7 @@ lead's score change" after the fact.
 ### Campaign / TrafficSource — free-text strings, not entities
 `source`, `medium`, `campaign` are plain strings on `Lead` and
 `FunnelEvent`, parsed from UTM params (`src/lib/attribution.ts`).
-`MarketingSpend.source`/`campaign` are also free text, matched to
+`MarketingSpend.source`/`medium`/`campaign`/`content` are also free text, matched to
 lead/event data by string equality when computing cost metrics. There is
 no campaign-lifecycle entity (budget, flight dates, channel metadata).
 **Fine while spend entry and attribution are manual/ad-hoc.** Promote to
@@ -130,21 +130,12 @@ real `Campaign`/`TrafficSource` tables, referenced by ID, when campaign
 budgets/dates need to be managed as first-class objects rather than
 matched by string.
 
-### AttributionTouch — partially represented, first-touch only is "official"
-`FunnelEvent` rows do carry their own `source/medium/campaign/...` columns
-(so multi-touch *data* exists at the row level), but in practice **only
-the two client-fired events** (`visit`, `assessment_start`, both via
-`POST /api/track`) get freshly resolved attribution per hit. Every
-server-created event (`contact_captured`, `lead_created`, `mql`, `sql`,
-`scheduler_viewed`, `appointment_booked`) copies the *lead's stored
-first-touch* attribution rather than re-deriving the current visit's
-attribution, and `appointment_completed`/`customer_won`/`customer_lost`
-events carry no attribution at all. See `docs/EVENTS.md` for the full
-per-event breakdown. Net effect: real multi-touch/last-touch attribution
-analysis is not currently possible from this data, only first-touch. This
-is a documentation-worthy gap, not a design decision — closing it means
-passing the visit's current attribution through to every event-creation
-call site, not adding a new table.
+### VisitorAttribution / AttributionTouch
+`VisitorAttribution` is unique by company/visitor and preserves immutable
+first-touch plus mutable last-campaign/referral touch fields and timestamps.
+Both snapshots copy to `Lead`; conversion `FunnelEvent` rows retain the current
+last-touch snapshot. Direct/internal navigation does not erase a campaign.
+See `docs/ANALYTICS.md` for reporting-model semantics.
 
 ### Appointment
 Inspection booking: `leadId`, `inspectorId` (nullable — no inspector
@@ -275,8 +266,8 @@ Split into a separate table only if a lost lead can be re-engaged and win
 again later and both outcomes need to be preserved.
 
 ### MarketingSpend
-Implemented as designed: `source`, `campaign?`, `periodStart/End`,
-`amountCents`, matched to leads/events by `source`/`campaign` string
+Implemented as designed: `source`, `medium?`, `campaign?`, `content?`, `periodStart/End`,
+`amountCents`, matched to events by the same attribution dimensions
 equality when computing cost metrics (`src/lib/dashboard-metrics.ts`).
 
 ### Revenue — merged into Lead
@@ -298,10 +289,10 @@ written for: appointment cancel/no-show/complete, or lead-score changes
 entityId)`.
 
 ### Event → FunnelEvent
-The append-only event log described in `docs/EVENTS.md`. `companyId`,
-`leadId?` (nullable — pre-identification visits have none), `visitorId`,
-`eventType`, per-event attribution fields, `metadata` (JSON),
-`createdAt`. Indexed on `(companyId, eventType)` and `visitorId`.
+The idempotent event log described in `docs/EVENTS.md`. `companyId`,
+`leadId?`, `appointmentId?`, `visitorId`, `eventType`, unique tenant-scoped
+`eventKey`, `funnelStep`, demo mode, attribution fields, allow-listed metadata,
+and `createdAt`. Revenue is the one intentional current-state event per lead.
 
 ## Relationship summary
 
@@ -343,7 +334,7 @@ User 1─* AuditLog  (userId nullable — system-driven changes)
 | LeadScore | `Lead.score`/`classification`, no history |
 | Campaign | free-text `campaign` string |
 | TrafficSource | free-text `source`/`medium` strings |
-| AttributionTouch | `FunnelEvent` attribution columns, first-touch-only in practice |
+| AttributionTouch | `VisitorAttribution` first/last touch plus `FunnelEvent` snapshots |
 | Appointment | `Appointment` |
 | Inspector | `Inspector` |
 | AvailabilityRule | `Company` scalar fields, company-wide not per-inspector |

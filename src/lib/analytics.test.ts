@@ -6,6 +6,8 @@ import {
   computeConversionRate,
   computeCostMetrics,
   computeFunnelCounts,
+  computeFunnelReport,
+  computeQuestionDropOff,
   computeReturnOnSpend,
   computeRoi,
   computeShowRate,
@@ -15,14 +17,14 @@ import {
 describe("computeFunnelCounts", () => {
   it("tallies known event types and ignores unknown ones", () => {
     const counts = computeFunnelCounts([
-      { eventType: "visit" },
-      { eventType: "visit" },
+      { eventType: "landing_page_view" },
+      { eventType: "landing_page_view" },
       { eventType: "lead_created" },
       { eventType: "not_a_real_event" },
     ]);
-    expect(counts.visit).toBe(2);
+    expect(counts.landing_page_view).toBe(2);
     expect(counts.lead_created).toBe(1);
-    expect(counts.sql).toBe(0);
+    expect(counts.lead_qualified).toBe(0);
   });
 });
 
@@ -49,7 +51,9 @@ describe("computeAttributionBreakdown", () => {
 
     expect(rows).toEqual([{
       source: "google",
+      medium: "Unspecified",
       campaign: "termite-search",
+      content: "Unspecified",
       leads: 2,
       qualified: 1,
       booked: 1,
@@ -68,16 +72,39 @@ describe("computeStageConversionRates", () => {
 
   it("computes a correct rate and drop-off", () => {
     const counts = computeFunnelCounts([
-      { eventType: "visit" },
-      { eventType: "visit" },
-      { eventType: "visit" },
-      { eventType: "visit" },
-      { eventType: "assessment_start" },
+      { eventType: "landing_page_view" },
+      { eventType: "landing_page_view" },
+      { eventType: "landing_page_view" },
+      { eventType: "landing_page_view" },
+      { eventType: "funnel_started" },
     ]);
     const rates = computeStageConversionRates(counts);
-    const visitToStart = rates.find((r) => r.from === "visit" && r.to === "assessment_start");
+    const visitToStart = rates.find((r) => r.from === "landing_page_view" && r.to === "funnel_started");
     expect(visitToStart?.rate).toBe(0.25);
     expect(visitToStart?.dropOff).toBe(0.75);
+  });
+});
+
+describe("deduplicated funnel and drop-off reporting", () => {
+  const event = (eventType: string, visitorId: string, leadId: string | null = null, funnelStep: string | null = null) => ({ eventType, visitorId, leadId, funnelStep });
+  it("does not double count retries and calculates stage abandonment", () => {
+    const events = [event("landing_page_view", "v1"), event("landing_page_view", "v1"), event("landing_page_view", "v2"), event("funnel_started", "v1"), event("lead_created", "v1", "l1")];
+    const stages = computeFunnelReport(events);
+    expect(stages[0].count).toBe(2);
+    expect(stages[1]).toMatchObject({ count: 1, abandoned: 1, conversionFromPrevious: 0.5 });
+  });
+
+  it("reports qualification question reach, completion, and abandonment", () => {
+    const rows = computeQuestionDropOff([event("funnel_started", "v1"), event("funnel_started", "v2"), event("qualification_question_answered", "v1", "l1", "zipCode")], ["zipCode", "isHomeowner"]);
+    expect(rows[0]).toMatchObject({ reached: 2, completed: 1, abandoned: 1 });
+    expect(rows[1]).toMatchObject({ reached: 1, completed: 0, abandoned: 1 });
+  });
+
+  it("uses authoritative next-step routing for conditional branches", () => {
+    const routed = { ...event("qualification_question_answered", "v1", "l1", "hasExistingProvider"), metadata: JSON.stringify({ nextQuestionId: "timeline" }) };
+    const rows = computeQuestionDropOff([event("funnel_started", "v1"), routed, event("qualification_question_answered", "v1", "l1", "timeline")], ["hasExistingProvider", "switchReason", "timeline"]);
+    expect(rows[1].reached).toBe(0);
+    expect(rows[2]).toMatchObject({ reached: 1, completed: 1 });
   });
 });
 

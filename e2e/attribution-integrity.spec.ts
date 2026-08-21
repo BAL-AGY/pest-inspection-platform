@@ -15,14 +15,18 @@ test("tracking ignores stale or cross-visitor lead IDs without failing the event
     data: { visitorId, answers: { zipCode: "73301" } },
   });
   expect(created.status()).toBe(200);
-  const leadId = (await created.json()).lead.id as string;
+  const createdBody = await created.json();
+  const leadId = createdBody.lead.id as string;
+  const leadToken = createdBody.leadToken as string;
 
   const crossVisitor = await request.post("/api/track", {
     data: {
       visitorId: otherVisitorId,
       leadId,
-      eventType: "assessment_start",
+      leadToken,
+      eventType: "funnel_started",
       url: "http://localhost:3000/inspection?utm_source=google&utm_campaign=integrity",
+      analyticsSessionId: `cross-${stamp}`, eventKey: "start",
     },
   });
   expect(crossVisitor.status()).toBe(200);
@@ -34,8 +38,9 @@ test("tracking ignores stale or cross-visitor lead IDs without failing the event
     data: {
       visitorId,
       leadId: `missing-${stamp}`,
-      eventType: "assessment_start",
+      eventType: "funnel_started",
       url: "http://localhost:3000/inspection",
+      analyticsSessionId: `stale-${stamp}`, eventKey: "start",
     },
   });
   expect(stale.status()).toBe(200);
@@ -46,8 +51,10 @@ test("tracking ignores stale or cross-visitor lead IDs without failing the event
     data: {
       visitorId,
       leadId,
-      eventType: "assessment_start",
+      leadToken,
+      eventType: "funnel_started",
       url: "http://localhost:3000/inspection",
+      analyticsSessionId: `owned-${stamp}`, eventKey: "start",
     },
   });
   expect(owned.status()).toBe(200);

@@ -5,7 +5,7 @@ import { track } from "@/lib/visitor";
 
 export default function LandingTracker() {
   useEffect(() => {
-    void track("visit");
+    void track("landing_page_view");
   }, []);
 
   return null;

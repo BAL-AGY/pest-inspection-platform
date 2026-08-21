@@ -179,14 +179,13 @@ persistence goes through a route handler or a server action.
 Homegrown, not a third-party analytics vendor (consistent with "no
 fabricated... third-party integrations" in Compliance boundaries — nothing
 is silently phoning out to GA/Segment/etc.). Every trackable moment is a
-row in the append-only `FunnelEvent` table, written either client-side via
-`track()` → `POST /api/track` (fresh attribution resolved per hit) or
-server-side inline in the route handler that caused the state change
-(reuses the lead's stored first-touch attribution). Full taxonomy, firing
-sites, and attribution-completeness caveats: `docs/EVENTS.md`. Funnel
-conversion and cost-per-stage metrics are computed from this table by pure
-functions in `src/lib/analytics.ts`, never fabricated — a stage with no
-data renders as unavailable, not zero.
+row in `FunnelEvent`, written through the centralized idempotent writer.
+`POST /api/track` is restricted to four non-authoritative browser interaction
+events and cannot forge qualification, booking, customer, or revenue outcomes;
+server conversions are written beside their authoritative state mutation.
+Full taxonomy: `docs/EVENTS.md`. Unique visitors/leads drive funnel counts,
+company-local date boundaries drive ranges, and unavailable spend/revenue stays
+unavailable rather than being fabricated. See `docs/ANALYTICS.md`.
 
 ### Scheduling architecture
 
@@ -434,15 +433,13 @@ timeline yet.
 
 ### Attribution architecture
 
-First-touch UTM/click-id parsing (`src/lib/attribution.ts`) resolved at
-the landing page and persisted once on `Lead` (`source/medium/campaign/
-content/term/landingPage/clickId`), never overwritten on subsequent visits
-by the same lead. `FunnelEvent` rows carry the same columns, but — see
-`docs/EVENTS.md` — only the two client-fired event types currently get
-attribution resolved fresh per event; the rest inherit the lead's
-first-touch values or carry none. Cost-per-lead/MQL/SQL/booked/CAC/ROAS
-are computed by matching `MarketingSpend.source`/`campaign` strings against
-lead/event attribution, never fabricated when spend data is absent.
+UTM/click-id/referrer parsing (`src/lib/attribution.ts`) feeds a durable
+`VisitorAttribution` first/last-touch record. First touch is immutable; a later
+campaign/click/external referral updates last touch, while direct/internal
+navigation does not erase it. Both snapshots persist on the Lead and server
+conversion events inherit last touch. `MarketingSpend` and event reporting use
+source/medium/campaign/content dimensions; costs, CAC, ROAS and ROI remain null
+when required real spend/revenue is absent. See `docs/ANALYTICS.md`.
 
 ### Deployment strategy
 
@@ -553,10 +550,9 @@ place this schema simplifies a maximal entity list into fewer tables:
   concern, existing-provider/switcher fields, qualification answers, score,
   classification (MQL/SQL), pipeline status, source/campaign attribution,
   timestamps.
-- `FunnelEvent` — append-only event log per visitor/lead
-  (visit → assessment start → contact captured → lead → MQL → SQL →
-  scheduler viewed → appointment booked → appointment completed →
-  won/lost), the source of truth for funnel/attribution analytics.
+- `FunnelEvent` — tenant-scoped, idempotent event log from landing through
+  qualification, booking lifecycle, customer outcome, and real revenue; the
+  source of truth for funnel/attribution analytics.
 - `Inspector` — who can be assigned to inspections.
 - `Appointment` — inspection booking: lead, inspector, time slot, status
   (booked/rescheduled/cancelled/no-show/completed), tied to availability
@@ -597,14 +593,10 @@ priority:
    send attempt through the shared gate now persists a `Communication`
    row — see the Messaging provider abstraction section above and
    `docs/DATA_MODEL.md` **Communication**.
-3. **Three appointment-lifecycle events are missing from the funnel log**
-   (reschedule, cancel, no-show) — `Appointment.status` itself is correct,
-   but these transitions are invisible to funnel/attribution analytics.
-   → `docs/EVENTS.md`.
-4. **Attribution on most events is first-touch-inherited, not fresh** —
-   true multi-touch/last-touch attribution isn't derivable from the event
-   log today, only first-touch (which is reliable). → `docs/EVENTS.md`
-   **Attribution completeness**.
+3. Reschedule, cancel, and complete are now transactional funnel events;
+   no-show remains current-state-only and is included in show-rate reporting.
+4. First and last attribution are durable; the dashboard currently uses
+   event/last-touch attribution and does not yet offer a model selector.
 5. **`Appointment.status = "rescheduled"` is declared but never set**
    (reschedule happens in-place); `rescheduledFromId` is similarly unused.
    Either drop both or actually use them. → `docs/STATES.md`.

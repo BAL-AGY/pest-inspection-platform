@@ -1,5 +1,6 @@
 import Link from "next/link";
 import LandingTracker from "./landing-tracker";
+import TrackedInspectionCta from "./tracked-inspection-cta";
 
 export default async function LandingPage({
   searchParams,
@@ -30,12 +31,7 @@ export default async function LandingPage({
           area and get you on the calendar — no purchase required.
         </p>
         <div className="flex justify-center pt-2">
-          <Link
-            href={inspectionHref}
-            className="inline-flex items-center justify-center rounded-md bg-emerald-700 px-8 py-4 text-lg font-semibold text-white shadow hover:bg-emerald-800 transition-colors w-full sm:w-auto"
-          >
-            Get My Free Inspection
-          </Link>
+          <TrackedInspectionCta href={inspectionHref} />
         </div>
         <p className="text-sm text-zinc-500">
           Already work with another pest control company? We offer free

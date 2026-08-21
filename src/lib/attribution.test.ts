@@ -45,6 +45,7 @@ describe("resolveAttribution", () => {
         term: null,
         landingPage: "/",
         clickId: null,
+        gclid: null, fbclid: null, referrer: null,
       },
       "www.bing.com",
     );
@@ -61,6 +62,7 @@ describe("resolveAttribution", () => {
         term: null,
         landingPage: "/",
         clickId: null,
+        gclid: null, fbclid: null, referrer: null,
       },
       "www.yelp.com",
     );
@@ -78,6 +80,7 @@ describe("resolveAttribution", () => {
         term: null,
         landingPage: "/",
         clickId: null,
+        gclid: null, fbclid: null, referrer: null,
       },
       null,
     );

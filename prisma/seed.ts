@@ -1,7 +1,6 @@
 /**
- * Seeds exactly one real, usable Company + owner login + inspector so the
- * app is operable end-to-end in dev. This is operational scaffolding
- * (account you actually log into), not fabricated demo data — no leads,
+ * Seeds one explicitly demo-labeled Company + owner login + inspector so the
+ * app is operable end-to-end in dev. No leads,
  * appointments, or analytics are seeded; those only appear from real usage.
  */
 import { PrismaClient } from "@prisma/client";
@@ -17,10 +16,11 @@ async function main() {
 
   const company = await prisma.company.upsert({
     where: { slug: "demo-pest-control" },
-    update: {},
+    update: { isDemo: true },
     create: {
       name: "Demo Pest Control Co.",
       slug: "demo-pest-control",
+      isDemo: true,
       timezone: "America/Chicago",
       serviceZipCodes: JSON.stringify(["73301", "78701", "78702", "78703"]),
       supportedPests: JSON.stringify([

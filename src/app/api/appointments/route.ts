@@ -22,6 +22,7 @@ import { sendIfAllowed } from "@/lib/suppression";
 import { verifyLeadToken } from "@/lib/funnel-capability";
 import { enforceRateLimit, rateLimitResponse, trustedClientAddress } from "@/lib/rate-limit";
 import { runSerializableTransaction } from "@/lib/serializable-transaction";
+import { attributionFromLead, recordFunnelEvent } from "@/lib/analytics-events";
 
 const bookSchema = z.object({
   leadId: z.string().min(1),
@@ -161,6 +162,7 @@ export async function POST(req: NextRequest) {
           data: {
             companyId: company.id,
             leadId: lead.id,
+            isDemo: lead.isDemo,
             inspectorId: inspector?.id ?? null,
             scheduledStart: requestedStart,
             scheduledEnd: requestedEnd,
@@ -168,17 +170,17 @@ export async function POST(req: NextRequest) {
           },
         });
         await tx.lead.update({ where: { id: lead.id }, data: { status: "inspection_booked" } });
-        await tx.funnelEvent.create({
-          data: {
-            companyId: company.id,
-            leadId: lead.id,
-            visitorId: lead.visitorId ?? lead.id,
-            eventType: "appointment_booked",
-            source: lead.source,
-            medium: lead.medium,
-            campaign: lead.campaign,
-          },
-        });
+        await recordFunnelEvent({
+          companyId: company.id,
+          leadId: lead.id,
+          appointmentId: created.id,
+          visitorId: lead.visitorId ?? lead.id,
+          eventType: "inspection_booked",
+          eventKey: `appointment:${created.id}:booked`,
+          funnelStep: "booked",
+          isDemo: lead.isDemo,
+          attribution: attributionFromLead(lead),
+        }, tx);
         return created;
       },
     );

@@ -14,6 +14,7 @@ import { MESSAGE_TEMPLATES } from "@/lib/communications";
 import { sendIfAllowed } from "@/lib/suppression";
 import { cancelAppointmentAndNotify } from "@/lib/appointment-actions";
 import { runSerializableTransaction } from "@/lib/serializable-transaction";
+import { attributionFromLead, recordFunnelEvent } from "@/lib/analytics-events";
 
 const patchSchema = z.object({
   action: z.enum(["reschedule", "cancel", "no_show", "complete"]),
@@ -130,10 +131,12 @@ export async function PATCH(
             durationMinutes: company.inspectionDurationMinutes,
             timeZone,
           });
-          return tx.appointment.update({
+          const rescheduled = await tx.appointment.update({
             where: { id },
             data: { scheduledStart: requestedStart, scheduledEnd: requestedEnd },
           });
+          await recordFunnelEvent({ companyId: session.companyId, leadId: appointment.leadId, appointmentId: appointment.id, visitorId: appointment.lead.visitorId ?? appointment.leadId, eventType: "inspection_rescheduled", eventKey: `appointment:${appointment.id}:rescheduled:${requestedStart.toISOString()}`, funnelStep: "rescheduled", isDemo: appointment.lead.isDemo, attribution: attributionFromLead(appointment.lead) }, tx);
+          return rescheduled;
         },
       );
     } catch (err) {
@@ -205,21 +208,11 @@ export async function PATCH(
   }
 
   // complete
-  const updated = await prisma.appointment.update({
-    where: { id },
-    data: { status: "completed", completedAt: new Date() },
-  });
-  await prisma.lead.update({
-    where: { id: appointment.leadId },
-    data: { status: "inspection_completed" },
-  });
-  await prisma.funnelEvent.create({
-    data: {
-      companyId: session.companyId,
-      leadId: appointment.leadId,
-      visitorId: appointment.lead.visitorId ?? appointment.leadId,
-      eventType: "appointment_completed",
-    },
+  const updated = await prisma.$transaction(async (tx) => {
+    const completed = await tx.appointment.update({ where: { id }, data: { status: "completed", completedAt: new Date() } });
+    await tx.lead.update({ where: { id: appointment.leadId }, data: { status: "inspection_completed" } });
+    await recordFunnelEvent({ companyId: session.companyId, leadId: appointment.leadId, appointmentId: appointment.id, visitorId: appointment.lead.visitorId ?? appointment.leadId, eventType: "inspection_completed", eventKey: `appointment:${appointment.id}:completed`, funnelStep: "completed", isDemo: appointment.lead.isDemo, attribution: attributionFromLead(appointment.lead) }, tx);
+    return completed;
   });
   return NextResponse.json({ appointment: updated });
 }

@@ -5,7 +5,7 @@ import { test, expect } from "@playwright/test";
  * TASKS.md "definition of done"): traffic → landing → qualification →
  * contact capture → lead scoring/MQL/SQL → scheduling with double-booking
  * prevention → CRM/pipeline → inspection outcome → dashboard/analytics
- * update. Runs against the real dev server and real SQLite dev database —
+ * update. Runs against the real dev server and real PostgreSQL test database —
  * nothing here is mocked.
  */
 
@@ -119,7 +119,7 @@ test("real prospect moves through the full acquisition-to-outcome journey", asyn
   // The first available appointment can legitimately be a later company-local
   // day (for example when this suite runs after business hours). Assert the
   // all-time booked funnel metric, not the operational "today" bucket.
-  const bookedInspectionsCard = page.getByText("Booked inspections").locator("..");
+  const bookedInspectionsCard = page.getByText("Booked inspections", { exact: true }).first().locator("..");
   await expect(bookedInspectionsCard).toContainText(/[1-9]/);
 
   // 13-15. Appointment + lead visible in CRM/pipeline/calendar.
@@ -132,9 +132,10 @@ test("real prospect moves through the full acquisition-to-outcome journey", asyn
   await expect(page.locator("p.uppercase", { hasText: "sql" })).toBeVisible();
   await expect(page.getByLabel("Lead summary").getByText("73301", { exact: true })).toBeVisible();
   await expect(page.getByText("Termites", { exact: true })).toBeVisible();
-  await expect(page.getByText("google", { exact: true })).toBeVisible();
-  await expect(page.getByText("e2e_playwright", { exact: true })).toBeVisible();
+  await expect(page.getByText("google", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("e2e_playwright", { exact: true }).first()).toBeVisible();
   await expect(page.getByText(/what's the zip code of the property/i)).toBeVisible();
+  await expect(page.getByText("Qualified lead", { exact: true })).toBeVisible();
   await expect(page.getByText("Booked free home inspection", { exact: true })).toBeVisible();
 
   const note = `Manual demo follow-up ${Date.now()}`;
@@ -163,8 +164,8 @@ test("real prospect moves through the full acquisition-to-outcome journey", asyn
   // suite is written to be safely re-run against a persistent dev database
   // (values accumulate across runs) rather than assuming a pristine DB.
   await page.goto("/dashboard");
-  await expect(page.getByText("Customers won").locator("..")).toContainText(/[1-9]/);
-  await expect(page.getByText("Revenue attributed").locator("..")).toContainText(/\$\d/);
+  await expect(page.getByText("Customers won", { exact: true }).first().locator("..")).toContainText(/[1-9]/);
+  await expect(page.getByText("Revenue attributed", { exact: true }).locator("..")).toContainText(/\$\d/);
 
   await page.goto("/dashboard/marketing");
   const spendMarker = `e2e-${Date.now()}`;
@@ -186,7 +187,7 @@ test("real prospect moves through the full acquisition-to-outcome journey", asyn
   await expect(page.getByText("Show rate").locator("..")).toContainText(/%/);
   await expect(page.getByText("Close rate").locator("..")).toContainText(/%/);
   await expect(page.getByText("ROI", { exact: true }).locator("..")).toContainText(/%/);
-  const attributedCampaignRow = page.getByRole("row", { name: /google \/ e2e_playwright/i });
+  const attributedCampaignRow = page.getByRole("row", { name: /google \/ cpc.*e2e_playwright/i });
   await expect(attributedCampaignRow).toBeVisible();
   await expect(attributedCampaignRow).toContainText(/\$450\.00|\$\d/);
 });

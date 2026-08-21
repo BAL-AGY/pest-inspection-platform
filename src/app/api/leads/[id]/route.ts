@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { requireSession } from "@/lib/require-session";
 import { LEAD_STATUSES } from "@/lib/pipeline";
 import { recordSuppression } from "@/lib/suppression";
+import { attributionFromLead, clearRevenueEvent, recordCustomerOutcomeEvent, recordRevenueEvent } from "@/lib/analytics-events";
 
 export async function GET(
   _req: NextRequest,
@@ -108,14 +109,14 @@ export async function PATCH(
   }
 
   if (outcome === "won" || outcome === "lost") {
-    await prisma.funnelEvent.create({
-      data: {
-        companyId: session.companyId,
-        leadId: id,
-        visitorId: existing.visitorId ?? id,
-        eventType: outcome === "won" ? "customer_won" : "customer_lost",
-      },
+    await recordCustomerOutcomeEvent({
+      companyId: session.companyId, leadId: id, visitorId: existing.visitorId ?? id,
+      outcome, isDemo: existing.isDemo,
+      attribution: attributionFromLead(existing),
     });
+    const value = contractValueCents ?? existing.contractValueCents;
+    if (outcome === "won" && value !== null) await recordRevenueEvent({ companyId: session.companyId, leadId: id, visitorId: existing.visitorId ?? id, amountCents: value, isDemo: existing.isDemo, attribution: attributionFromLead(existing) });
+    if (outcome === "lost") await clearRevenueEvent(session.companyId, id);
   }
 
   return NextResponse.json({ lead });

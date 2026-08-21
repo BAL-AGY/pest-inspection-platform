@@ -22,6 +22,12 @@ import {
   rateLimitResponse,
   trustedClientAddress,
 } from "@/lib/rate-limit";
+import {
+  answerEventKey,
+  attributionFromLead,
+  recordAttributionTouch,
+  recordFunnelEvent,
+} from "@/lib/analytics-events";
 
 const contactSchema = z.object({
   firstName: z.string().min(1).optional(),
@@ -38,6 +44,9 @@ const attributionSchema = z.object({
   term: z.string().nullable().optional(),
   landingPage: z.string().nullable().optional(),
   clickId: z.string().nullable().optional(),
+  gclid: z.string().nullable().optional(),
+  fbclid: z.string().nullable().optional(),
+  referrer: z.string().nullable().optional(),
 });
 
 const upsertSchema = z.object({
@@ -145,6 +154,30 @@ async function saveLead(req: NextRequest) {
     existing = null;
   }
 
+  const authoritativeVisitorId = existing?.visitorId ?? visitorId;
+  if (attribution) {
+    await recordAttributionTouch({
+      companyId: company.id,
+      visitorId: authoritativeVisitorId,
+      isDemo: company.isDemo,
+      attribution: {
+        source: attribution.source ?? null,
+        medium: attribution.medium ?? null,
+        campaign: attribution.campaign ?? null,
+        content: attribution.content ?? null,
+        term: attribution.term ?? null,
+        landingPage: attribution.landingPage ?? null,
+        clickId: attribution.clickId ?? null,
+        gclid: attribution.gclid ?? null,
+        fbclid: attribution.fbclid ?? null,
+        referrer: attribution.referrer ?? null,
+      },
+    });
+  }
+  const visitorAttribution = await prisma.visitorAttribution.findUnique({
+    where: { companyId_visitorId: { companyId: company.id, visitorId: authoritativeVisitorId } },
+  });
+
   const priorAnswers: QualificationAnswers = parseStoredQualificationAnswers(
     existing?.qualificationAnswers ?? null,
   );
@@ -207,12 +240,13 @@ async function saveLead(req: NextRequest) {
     phone: resolvedPhone,
   });
   const isNew = !existing;
-  const becameMql = classification === "mql" && existing?.classification !== "mql" && existing?.classification !== "sql";
-  const becameSql = classification === "sql" && existing?.classification !== "sql";
   const justCapturedContact = nowHasContact && !hadContact;
+  const isAuthoritativelyQualified = qualification.complete && qualification.inServiceArea &&
+    qualification.supportedPest && qualification.answers.isHomeowner === true && classification !== "prospect";
 
   const data = {
     companyId: company.id,
+    isDemo: company.isDemo,
     // Frozen after creation — a continuation request's visitorId is never
     // trusted to overwrite the lead's real, ownership-token-bound
     // visitorId (see src/lib/funnel-capability.ts).
@@ -247,13 +281,27 @@ async function saveLead(req: NextRequest) {
     score,
     classification,
     status: nextStatus,
-    source: existing?.source ?? attribution?.source ?? null,
-    medium: existing?.medium ?? attribution?.medium ?? null,
-    campaign: existing?.campaign ?? attribution?.campaign ?? null,
-    content: existing?.content ?? attribution?.content ?? null,
-    term: existing?.term ?? attribution?.term ?? null,
-    landingPage: existing?.landingPage ?? attribution?.landingPage ?? null,
+    source: existing?.source ?? visitorAttribution?.firstSource ?? attribution?.source ?? null,
+    medium: existing?.medium ?? visitorAttribution?.firstMedium ?? attribution?.medium ?? null,
+    campaign: existing?.campaign ?? visitorAttribution?.firstCampaign ?? attribution?.campaign ?? null,
+    content: existing?.content ?? visitorAttribution?.firstContent ?? attribution?.content ?? null,
+    term: existing?.term ?? visitorAttribution?.firstTerm ?? attribution?.term ?? null,
+    landingPage: existing?.landingPage ?? visitorAttribution?.firstLandingPage ?? attribution?.landingPage ?? null,
     clickId: existing?.clickId ?? attribution?.clickId ?? null,
+    gclid: existing?.gclid ?? visitorAttribution?.firstGclid ?? attribution?.gclid ?? null,
+    fbclid: existing?.fbclid ?? visitorAttribution?.firstFbclid ?? attribution?.fbclid ?? null,
+    referrer: existing?.referrer ?? visitorAttribution?.firstReferrer ?? attribution?.referrer ?? null,
+    lastSource: visitorAttribution?.lastSource ?? attribution?.source ?? existing?.lastSource ?? existing?.source ?? null,
+    lastMedium: visitorAttribution?.lastMedium ?? attribution?.medium ?? existing?.lastMedium ?? existing?.medium ?? null,
+    lastCampaign: visitorAttribution?.lastCampaign ?? attribution?.campaign ?? existing?.lastCampaign ?? existing?.campaign ?? null,
+    lastContent: visitorAttribution?.lastContent ?? attribution?.content ?? existing?.lastContent ?? existing?.content ?? null,
+    lastTerm: visitorAttribution?.lastTerm ?? attribution?.term ?? existing?.lastTerm ?? existing?.term ?? null,
+    lastLandingPage: visitorAttribution?.lastLandingPage ?? attribution?.landingPage ?? existing?.lastLandingPage ?? existing?.landingPage ?? null,
+    lastGclid: visitorAttribution?.lastGclid ?? attribution?.gclid ?? existing?.lastGclid ?? existing?.gclid ?? null,
+    lastFbclid: visitorAttribution?.lastFbclid ?? attribution?.fbclid ?? existing?.lastFbclid ?? existing?.fbclid ?? null,
+    lastReferrer: visitorAttribution?.lastReferrer ?? attribution?.referrer ?? existing?.lastReferrer ?? existing?.referrer ?? null,
+    firstTouchAt: existing?.firstTouchAt ?? visitorAttribution?.firstTouchedAt ?? new Date(),
+    lastTouchAt: visitorAttribution?.lastTouchedAt ?? existing?.lastTouchAt ?? new Date(),
     // Suppressed channels never get (re)activated here, regardless of what
     // consent flags the request carried — a suppressed contact does not
     // silently regain marketing permission by re-entering the funnel.
@@ -304,28 +352,32 @@ async function saveLead(req: NextRequest) {
     ? await prisma.lead.update({ where: { id: existing.id }, data })
     : await prisma.lead.create({ data });
 
-  const eventsToLog: { eventType: "lead_created" | "contact_captured" | "mql" | "sql" }[] = [];
-  if (isNew) eventsToLog.push({ eventType: "lead_created" });
-  if (justCapturedContact) eventsToLog.push({ eventType: "contact_captured" });
-  if (becameMql) eventsToLog.push({ eventType: "mql" });
-  if (becameSql) eventsToLog.push({ eventType: "sql" });
-
-  for (const e of eventsToLog) {
-    await prisma.funnelEvent.create({
-      data: {
-        companyId: company.id,
-        leadId: lead.id,
-        visitorId: lead.visitorId ?? visitorId,
-        eventType: e.eventType,
-        source: lead.source,
-        medium: lead.medium,
-        campaign: lead.campaign,
-        content: lead.content,
-        term: lead.term,
-        landingPage: lead.landingPage,
-        clickId: lead.clickId,
-      },
-    });
+  const eventAttribution = attributionFromLead(lead);
+  if (isNew) {
+    await recordFunnelEvent({ companyId: company.id, leadId: lead.id, visitorId: authoritativeVisitorId,
+      eventType: "lead_created", eventKey: `lead:${lead.id}:created`, isDemo: company.isDemo, attribution: eventAttribution });
+  }
+  for (const [questionId, value] of Object.entries(validated.answers)) {
+    if (priorAnswers[questionId] !== value) {
+      await recordFunnelEvent({ companyId: company.id, leadId: lead.id, visitorId: authoritativeVisitorId,
+        eventType: "qualification_question_answered", eventKey: answerEventKey(lead.id, questionId, value),
+        funnelStep: questionId, isDemo: company.isDemo, attribution: eventAttribution,
+        metadata: { questionId, nextQuestionId: qualification.nextQuestion?.id ?? "contact" } });
+    }
+  }
+  if (justCapturedContact) {
+    await recordFunnelEvent({ companyId: company.id, leadId: lead.id, visitorId: authoritativeVisitorId,
+      eventType: "contact_information_submitted", eventKey: `lead:${lead.id}:contact-submitted`,
+      funnelStep: "contact", isDemo: company.isDemo, attribution: eventAttribution });
+  }
+  if (isAuthoritativelyQualified) {
+    await recordFunnelEvent({ companyId: company.id, leadId: lead.id, visitorId: authoritativeVisitorId,
+      eventType: "lead_qualified", eventKey: `lead:${lead.id}:qualified`, funnelStep: "qualification_complete",
+      isDemo: company.isDemo, attribution: eventAttribution, metadata: { classification } });
+  } else if (qualification.complete && !isAuthoritativelyQualified) {
+    await recordFunnelEvent({ companyId: company.id, leadId: lead.id, visitorId: authoritativeVisitorId,
+      eventType: "lead_disqualified", eventKey: `lead:${lead.id}:disqualified`, funnelStep: "qualification_complete",
+      isDemo: company.isDemo, attribution: eventAttribution });
   }
 
   const issuedLeadToken = issueLeadToken({

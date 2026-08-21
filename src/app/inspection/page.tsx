@@ -53,7 +53,7 @@ export default function InspectionFunnelPage() {
   const [funnelError, setFunnelError] = useState<string | null>(null);
 
   useEffect(() => {
-    track("assessment_start");
+    void track("funnel_started");
   }, []);
 
   const question = useMemo(() => getNextQuestion(answers), [answers]);
@@ -190,6 +190,12 @@ export default function InspectionFunnelPage() {
     try {
       const slot = slots.find((s) => s.start === selectedSlot);
       if (!slot) return;
+      void track("appointment_selected", {
+        leadId: lead.id,
+        funnelStep: "scheduling",
+        eventKey: `appointment-selected:${lead.id}:${slot.start}`,
+        metadata: { slotStart: slot.start },
+      });
       const res = await fetch("/api/appointments", {
         method: "POST",
         headers: { "Content-Type": "application/json" },

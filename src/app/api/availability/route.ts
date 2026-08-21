@@ -12,6 +12,7 @@ import { deriveQualificationState, parseStoredQualificationAnswers } from "@/lib
 import { verifyLeadToken } from "@/lib/funnel-capability";
 import { enforceRateLimit, rateLimitResponse, trustedClientAddress } from "@/lib/rate-limit";
 import { addLocalCalendarDays, companyDayRange, localDateKey } from "@/lib/timezone";
+import { attributionFromLead, recordFunnelEvent } from "@/lib/analytics-events";
 
 export async function GET(req: NextRequest) {
   const leadId = req.nextUrl.searchParams.get("leadId");
@@ -117,16 +118,15 @@ export async function GET(req: NextRequest) {
     timeZone,
   });
 
-  await prisma.funnelEvent.create({
-    data: {
-      companyId: company.id,
-      leadId: lead.id,
-      visitorId: lead.visitorId ?? lead.id,
-      eventType: "scheduler_viewed",
-      source: lead.source,
-      medium: lead.medium,
-      campaign: lead.campaign,
-    },
+  await recordFunnelEvent({
+    companyId: company.id,
+    leadId: lead.id,
+    visitorId: lead.visitorId ?? lead.id,
+    eventType: "scheduling_viewed",
+    eventKey: `lead:${lead.id}:scheduling-viewed`,
+    funnelStep: "scheduling",
+    isDemo: lead.isDemo,
+    attribution: attributionFromLead(lead),
   });
 
   return NextResponse.json({

@@ -85,7 +85,7 @@ IMPLEMENTED** · **BLOCKED BY EXTERNAL CREDENTIALS OR SERVICES**
 | CTA flow | COMPLETE AND WORKING | Single CTA `Get My Free Inspection` → `/inspection`, verified in e2e | none for the flow itself | — | — |
 | Source tracking | COMPLETE AND WORKING | `src/lib/attribution.ts`, persisted on `Lead` first-touch, verified in e2e (`utm_source=google` flows through to `lead.source`) | — | — | — |
 | UTM capture | COMPLETE AND WORKING | `parseAttribution()` reads all 5 UTM params + click IDs | — | — | — |
-| `cta_clicked` event | NOT IMPLEMENTED | grep of `track(` calls confirms only `visit`/`assessment_start` fire | No CTA-level analytics | P2 | Add `track("cta_clicked")` on the landing CTA |
+| `inspection_cta_clicked` event | COMPLETE AND WORKING | Tracked by the landing CTA through the restricted public event endpoint | — | — | — |
 
 ### Qualification
 
@@ -99,7 +99,7 @@ IMPLEMENTED** · **BLOCKED BY EXTERNAL CREDENTIALS OR SERVICES**
 | Existing-provider/switching path | COMPLETE AND WORKING | `hasExistingProvider` → `switchReason` with `SWITCHER_DISCLAIMER` (contract-non-interference compliance text) | — | — | — |
 | Contact capture | COMPLETE AND WORKING | Contact form in `inspection/page.tsx`, verified in e2e | — | — | — |
 | Lead creation | COMPLETE AND WORKING | `POST /api/leads` upsert, verified in e2e | — | — | — |
-| `assessment_step_completed` event | NOT IMPLEMENTED | Only `assessment_start` fires; no per-question event | Per-step drop-off inside the funnel isn't measurable | P2 | Fire an event (or reuse `/api/leads` writes) per question answered |
+| Qualification step completed event | COMPLETE AND WORKING | Each newly validated server-persisted question creates an idempotent `qualification_question_answered` event keyed by lead/question/value | — | — | — |
 
 ### Lead scoring
 
@@ -138,7 +138,7 @@ IMPLEMENTED** · **BLOCKED BY EXTERNAL CREDENTIALS OR SERVICES**
 | Property data | COMPLETE AND WORKING | ZIP shown; address lines captured on `Lead` but not currently rendered on the detail page | Minor — `addressLine1/2`/`city`/`state` are stored but not displayed | P2 | Add to lead-detail UI |
 | Qualification answers | COMPLETE AND WORKING | Rendered from `Lead.qualificationAnswers` JSON | — | — | — |
 | Lead score | COMPLETE AND WORKING | Score + classification shown | — | — | — |
-| Source/campaign | COMPLETE AND WORKING | `lead.source` shown; `medium`/`campaign`/`content`/`term` stored but not rendered | Minor — only `source` is surfaced in the UI today | P2 | Show full attribution block |
+| First/last attribution | COMPLETE AND WORKING | Lead detail renders first- and last-touch source/medium/campaign; durable visitor attribution includes content/term/click IDs/referrer | — | — | — |
 | Appointment details | COMPLETE AND WORKING | Appointments listed with actions | — | — | — |
 | Notes | COMPLETE AND WORKING | `LeadNote` create/list, verified in code | — | — | — |
 | Activity timeline | COMPLETE AND WORKING | `FunnelEvent`s rendered chronologically | Missing reschedule/cancel/no-show events (see Pipeline) means the timeline has visible gaps for those moments | P1 | See Pipeline gap |
@@ -175,32 +175,32 @@ IMPLEMENTED** · **BLOCKED BY EXTERNAL CREDENTIALS OR SERVICES**
 | Customers won/lost | COMPLETE AND WORKING | Verified live in this run | — | — | — |
 | Conversion rates | COMPLETE AND WORKING | Show rate, close rate, funnel drop-off table, all null-safe | — | — | — |
 | Cost metrics | COMPLETE AND WORKING | Verified live: cost-per-booked-inspection became a real `$` figure once spend was entered | — | — | — |
-| Source/campaign breakdown UI | NOT IMPLEMENTED | `GET /api/analytics/funnel` already computes `sourceBreakdown`; no dashboard page renders it | Data exists, no UI consumes it | P2 | Add a dashboard section for it |
+| Source/campaign breakdown UI | COMPLETE AND WORKING | Dashboard renders source/medium/campaign/content stages, spend, revenue, costs, CAC, ROAS and ROI for the selected company-timezone range | — | — | — |
 | Mobile-responsive | PARTIALLY IMPLEMENTED | Responsive grid classes present, not device-verified | See Customer Acquisition | P2 | — |
 
 ### Attribution
 
 | Requirement | Status | Evidence | Gap | Priority | Recommended next action |
 |---|---|---|---|---|---|
-| Source/Medium/Campaign/Content/Term/Landing page | COMPLETE AND WORKING (first-touch) | All columns on `Lead` and `FunnelEvent`, verified live | — | — | — |
+| Source/Medium/Campaign/Content/Term/Landing page | COMPLETE AND WORKING | Durable first and last touch on visitor/lead, per-event snapshot, verified in PostgreSQL route tests | — | — | — |
 | First-touch attribution | COMPLETE AND WORKING | Set once on lead creation, never overwritten, verified live (`utm_source=google` persisted through the whole run) | — | — | — |
 | Lead attribution persistence | COMPLETE AND WORKING | Same as above | — | — | — |
-| Per-event (multi-touch) attribution | PARTIALLY IMPLEMENTED | `FunnelEvent` has the columns, but only `visit`/`assessment_start` resolve them fresh — the rest copy the lead's first touch or carry none (`docs/EVENTS.md`) | True multi-touch/last-touch analysis isn't derivable from current data | P2 | Pass current-visit attribution through every server-side event-creation call site |
+| Per-event / last-touch attribution | COMPLETE AND WORKING | Campaign/referral touches update `VisitorAttribution.last*`; conversion events inherit the lead's authoritative last-touch snapshot while first touch remains immutable | Dashboard currently reports event/last-touch only; no attribution-model toggle | P2 enhancement | Add a first-vs-last model selector if customers need both aggregate views |
 
 ### Analytics
 
 | Requirement | Status | Evidence | Gap | Priority | Recommended next action |
 |---|---|---|---|---|---|
-| Page views (`visit`) | COMPLETE AND WORKING | Fires on landing page load | Fires only on `/`, not app-wide | P2 | Acceptable for a single-funnel product |
-| Funnel starts (`assessment_start`) | COMPLETE AND WORKING | Fires on `/inspection` load | — | — | — |
-| Contact capture event | COMPLETE AND WORKING | `contact_captured`, verified in code path | — | — | — |
+| Page views (`landing_page_view`) | COMPLETE AND WORKING | Idempotent landing event | Purposefully limited to the acquisition landing page | — | — |
+| Funnel starts (`funnel_started`) | COMPLETE AND WORKING | Fires on `/inspection` load | — | — | — |
+| Contact capture event | COMPLETE AND WORKING | `contact_information_submitted`, server authoritative | — | — | — |
 | Lead creation event | COMPLETE AND WORKING | `lead_created` | — | — | — |
-| MQL/SQL events | COMPLETE AND WORKING | `mql`/`sql`, verified live (SQL event fired for the e2e lead) | — | — | — |
-| Scheduler view event | COMPLETE AND WORKING | `scheduler_viewed` on `GET /api/availability` | — | — | — |
-| Inspection booking event | COMPLETE AND WORKING | `appointment_booked`, verified live | — | — | — |
-| Inspection completion event | COMPLETE AND WORKING | `appointment_completed`, verified live | — | — | — |
+| Qualification events | COMPLETE AND WORKING | Per-question events plus authoritative `lead_qualified`/`lead_disqualified`; client cannot submit these types | — | — | — |
+| Scheduler view event | COMPLETE AND WORKING | `scheduling_viewed` on authorized `GET /api/availability` | — | — | — |
+| Inspection booking event | COMPLETE AND WORKING | `inspection_booked` inside booking transaction | — | — | — |
+| Inspection lifecycle events | COMPLETE AND WORKING | rescheduled/cancelled/completed events share the state transaction | no-show remains current-state only | P2 | Add no-show event if cohort timelines require it |
 | Customer won/lost events | COMPLETE AND WORKING | Verified live | — | — | — |
-| Funnel drop-off analytics | COMPLETE AND WORKING | `computeStageConversionRates`, rendered on dashboard, null-safe when no data | — | — | — |
+| Funnel drop-off analytics | COMPLETE AND WORKING | Unique-entity primary stages plus question reached/completed/abandoned, rendered and null-safe | Conditional branch volume must be interpreted separately | P2 enhancement | Add branch-specific comparison if requested |
 | Conversion calculations | COMPLETE AND WORKING | Same as above | — | — | — |
 
 ### Economics
@@ -243,7 +243,13 @@ IMPLEMENTED** · **BLOCKED BY EXTERNAL CREDENTIALS OR SERVICES**
 | Tenant/company isolation | IMPLEMENTED BUT NEEDS VERIFICATION | Every Prisma query in every route/page is scoped by `session.companyId`, consistently, by code inspection | Only one `Company` exists — never exercised by a test with two tenants proving cross-tenant queries actually return nothing. Additionally (confirmed by the independent Codex audit): public routes resolve tenant via `getActiveCompany()` with no request-derived tenant signal at all (no subdomain/host resolution) — a deliberate, documented single-tenant-for-v1 scope (`src/lib/company.ts`'s own comment), not a live vulnerability today, but a real gap the moment a second company is onboarded without adding real tenant resolution first. | P1 | Add a second seeded company + a cross-tenant isolation test; add real tenant resolution to public routes before a second company goes live |
 | Input validation | COMPLETE AND WORKING (qualification hardened Step 19) | Zod schemas on every mutating route plus centralized qualification question/type/option/ZIP/conditional/order validation. `/api/leads` is strict at the top level, so client `score`, `classification`, and `status` fields are rejected. | — | — | — |
 | Secrets | COMPLETE AND WORKING (hardened Step 21) | `.env`/`.env.*`, key/certificate files, `credentials/`, and `secrets/` are gitignored; only placeholder-only `.env.example` is tracked. `src/lib/environment.ts` centrally validates production `AUTH_SECRET`, `FUNNEL_CAPABILITY_SECRET`, and `RATE_LIMIT_IDENTIFIER_SECRET`: all are mandatory, at least 32 characters, non-placeholder, and pairwise independent. Startup instrumentation plus auth, capability, and limiter runtime paths fail closed with non-secret errors. Production owner seeding requires explicit safe email/password, never logs plaintext, and cannot overwrite an existing user's hash. | No invitation/password-change/reset/MFA/recovery workflow. Secret rotation is an operator procedure and invalidates affected sessions/capabilities. | P1 before adding staff accounts | Implement managed owner/staff invitation and recovery flows when account administration enters scope; follow `docs/PRODUCTION_SETUP.md` meanwhile |
-| Rate limiting | COMPLETE AND WORKING (Step 18; distributed backend Step 23) | Central policies protect lead creation/continuation, tracking, availability, booking, and Auth.js POST actions. Production requires Redis; a Lua script atomically increments/expires privacy-HMAC keys using Redis server time across instances. Quota failures return 429 + Retry-After before mutation; backend failures fail closed with 503. Real-route DB non-mutation tests and a real Redis concurrent two-client suite verify the control. | Redis HA/monitoring, TLS/auth, eviction policy, and verified deployment proxy-hop configuration are operational responsibilities. `/api/track` lead association remains unverified even though flooding is bounded. | P1 deployment configuration | Provision monitored production Redis and verify the host proxy chain before launch |
+| Rate limiting | COMPLETE AND WORKING (Step 18; distributed backend Step 23) | Central policies protect lead creation/continuation, tracking, availability, booking, and Auth.js POST actions. Production requires Redis; a Lua script atomically increments/expires privacy-HMAC keys using Redis server time across instances. Quota failures return 429 + Retry-After before mutation; backend failures fail closed with 503. Real-route DB non-mutation tests and a real Redis concurrent two-client suite verify the control. | Redis HA/monitoring, TLS/auth, eviction policy, and verified deployment proxy-hop configuration are operational responsibilities. Analytics lead association now also requires the ownership capability. | P1 deployment configuration | Provision monitored production Redis and verify the host proxy chain before launch |
+
+**Analytics ownership update (2026-08-21):** the older IDOR row's statement
+that `/api/track` accepts an unverified lead association is superseded. The
+route now requires the same company/lead/server-visitor capability binding;
+otherwise it stores a valid anonymous event. It also rejects every
+server-authoritative conversion event type and namespaces browser event keys.
 | Business-hours/timezone correctness | COMPLETE AND WORKING (Step 20) | Central `src/lib/timezone.ts` validates IANA zones and converts company-local calendar dates through `@date-fns/tz`. Scheduling, availability, booking/reschedule day queries, capacity, dashboard today/week, calendar grouping, and operational displays use `Company.timezone`. Unit tests cover UTC-host assumptions, 23/25-hour days, spring gaps, fall overlaps, UTC midnight, capacity, and reporting boundaries; live route coverage proves booking/reschedule rejection. | Overnight business-hour intervals (`close <= open`) remain unsupported by the current same-day hours model and fail closed. | P2 if overnight service is introduced | Add an explicit cross-day business-hours model before offering overnight inspections |
 | Webhook validation | NOT APPLICABLE YET | No webhook-receiving endpoints exist in the codebase (no payment/SMS-provider webhooks) | N/A until a live provider with webhooks (e.g. delivery-status callbacks) is integrated | P2 | Add signature verification when that integration happens |
 | Audit logging | PARTIALLY IMPLEMENTED | See Pipeline — real but inconsistent coverage | — | P1 | See Pipeline gap |
