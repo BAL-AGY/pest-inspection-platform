@@ -17,6 +17,7 @@ import {
 } from "@/lib/visitor";
 
 type Stage = "questions" | "contact" | "scheduler" | "confirmed" | "not-eligible";
+type DisqualifyReason = "area" | "pest" | "homeowner" | "other" | null;
 
 interface LeadState {
   id: string | null;
@@ -51,6 +52,7 @@ export default function InspectionFunnelPage() {
   const [bookingError, setBookingError] = useState<string | null>(null);
   const [confirmedWhen, setConfirmedWhen] = useState<string | null>(null);
   const [funnelError, setFunnelError] = useState<string | null>(null);
+  const [disqualifyReason, setDisqualifyReason] = useState<DisqualifyReason>(null);
 
   useEffect(() => {
     void track("funnel_started");
@@ -58,7 +60,7 @@ export default function InspectionFunnelPage() {
 
   const question = useMemo(() => getNextQuestion(answers), [answers]);
 
-  async function saveAnswers(next: QualificationAnswers) {
+  async function saveAnswers(next: QualificationAnswers, justAnsweredQuestionId?: string) {
     setFunnelError(null);
     setSubmitting(true);
     try {
@@ -98,6 +100,32 @@ export default function InspectionFunnelPage() {
         if (leadToken) storeLeadToken(leadToken);
       }
       setAnswers(next);
+
+      // Stop as soon as a hard disqualifier is known, rather than only
+      // after the homeowner has answered every remaining question and
+      // typed in their contact info. The server already derives these
+      // facts (from the answer just submitted, plus current company
+      // configuration) on every response — this reuses that, no new
+      // endpoint or validation path needed. Each check only fires right
+      // after the question that determines it, since inServiceArea/
+      // supportedPest are computed as `false` before their question is
+      // even reached.
+      if (justAnsweredQuestionId === "zipCode" && data.inServiceArea === false) {
+        setDisqualifyReason("area");
+        setStage("not-eligible");
+        return;
+      }
+      if (justAnsweredQuestionId === "pestType" && data.supportedPest === false) {
+        setDisqualifyReason("pest");
+        setStage("not-eligible");
+        return;
+      }
+      if (justAnsweredQuestionId === "isHomeowner" && next.isHomeowner === false) {
+        setDisqualifyReason("homeowner");
+        setStage("not-eligible");
+        return;
+      }
+
       if (data.qualificationComplete) {
         setStage("contact");
       }
@@ -110,7 +138,7 @@ export default function InspectionFunnelPage() {
 
   function answer(id: string, value: string | boolean) {
     const next = { ...answers, [id]: value };
-    void saveAnswers(next);
+    void saveAnswers(next, id);
   }
 
   async function submitContact(e: React.FormEvent) {
@@ -160,6 +188,10 @@ export default function InspectionFunnelPage() {
         setStage("scheduler");
         await loadSlots(returnedLead.id, typeof data.leadToken === "string" ? data.leadToken : null);
       } else {
+        // The hard gates (area/pest/homeowner) are already caught earlier
+        // in the funnel — reaching here not-eligible means qualification
+        // completed but scoring didn't reach SQL (e.g. low urgency/severity).
+        setDisqualifyReason(inServiceArea === false ? "area" : "other");
         setStage("not-eligible");
       }
     } catch {
@@ -392,9 +424,13 @@ export default function InspectionFunnelPage() {
           <div className="flex flex-col gap-3 text-center">
             <h2 className="text-2xl font-bold">Thanks for reaching out</h2>
             <p className="text-zinc-600">
-              {lead.inServiceArea === false
+              {disqualifyReason === "area"
                 ? "It looks like your address is outside our current service area, so we can't book an inspection online right now."
-                : "Thanks for the info — a team member will follow up shortly to see if we're a good fit."}
+                : disqualifyReason === "pest"
+                  ? "We don't currently handle this online, but reach out directly and a team member can point you in the right direction."
+                  : disqualifyReason === "homeowner"
+                    ? "Right now we're set up to book inspections for homeowners. If that changes, reach out and we're happy to help."
+                    : "Thanks for the info — a team member will follow up shortly to see if we're a good fit."}
             </p>
           </div>
         )}
