@@ -264,7 +264,7 @@ server-authoritative conversion event type and namespaces browser event keys.
 | Production build | COMPLETE AND WORKING | **`next build` succeeded**, run fresh for this audit, all 19 routes compiled | — | — | — |
 | Type checking | COMPLETE AND WORKING | **`tsc --noEmit` — 0 errors**, run fresh for this audit | — | — | — |
 | Linting | COMPLETE AND WORKING | **`eslint` — 0 errors/warnings**, run fresh for this audit | — | — | — |
-| CI pipeline | NOT IMPLEMENTED | No `.github/workflows/` directory exists | These checks only run when a human/agent remembers to run them locally | P1 | Add a GitHub Actions workflow running lint/typecheck/test/build/e2e on push |
+| CI pipeline | IMPLEMENTED, NOT YET RUN BY GITHUB | `.github/workflows/ci.yml` provisions disposable PostgreSQL 17/Redis, validates migrations, typechecks, lints, runs unit/integration and full Playwright suites, then builds production | Workflow cannot be observed until pushed and executed by GitHub; it contains no deploy credential or action | P1 release | Review checkpoint, push, and confirm the first GitHub run |
 
 ---
 
@@ -358,9 +358,9 @@ work today; items 7+ build toward a safe production launch.
     decision left open, worth closing before a second staff account exists.
 12. **Extend `AuditLog` coverage** to appointment cancel/no-show/complete
     and lead-score changes.
-13. **Add a CI pipeline** (lint/typecheck/test/build/e2e on push) so the
-    verification this audit just did manually happens automatically going
-    forward.
+13. ~~**Add a CI pipeline**~~ **IMPLEMENTED, pending first GitHub run.** The
+    provider-neutral workflow verifies migrations, PostgreSQL/Redis behavior,
+    typecheck, lint, Vitest, Playwright and production build without deploying.
 14. **Add a cross-tenant isolation test** with a second seeded company,
     proving the `companyId` scoping that's already in every query actually
     holds under test — and, per the independent Codex audit, add real
@@ -376,8 +376,11 @@ work today; items 7+ build toward a safe production launch.
     PostgreSQL 17.11. **Still external/deployment-blocked:** provision the
     managed production database, pooling/TLS/backups/monitoring, apply
     migrations, and validate provider-specific restore/failover behavior.
-17. **Deployment config** (Dockerfile or hosting-specific config, env var
-    documentation) — blocked on choosing a host.
+17. **Create production infrastructure after approval.** Render is the
+    recommended pilot host; portable CI, health checks, environment validation,
+    release/migration, backup, monitoring, staging and rollback design are now
+    implemented/documented. No external resource or provider-specific manifest
+    exists yet. See `docs/DEPLOYMENT.md` and `docs/OPERATIONS.md`.
 18. **SEO/AEO polish, CTA/step-level event instrumentation, dashboard
     source-breakdown UI, mobile device verification** — lower-priority
     polish items that don't block the core journey or compliance posture.

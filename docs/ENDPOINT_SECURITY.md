@@ -25,6 +25,8 @@ controls implemented in `src/lib/rate-limit.ts` and the route handlers.
 | `/api/analytics/funnel` | GET | Authenticated read | Session + company scope |
 | `/api/dashboard/metrics` | GET | Authenticated read | Session + company scope |
 | Dashboard Server Actions | POST to page routes | Internal authenticated writes | Page/session checks; not public API policies |
+| `/api/health/live` | GET | Public operational read | No dependency access; generic non-cacheable response |
+| `/api/health/ready` | GET | Public operational read | Generic response; short per-instance probe coalescing/cache prevents dependency amplification |
 
 ## Central rate limiter
 

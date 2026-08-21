@@ -57,6 +57,20 @@ export function validateProductionEnvironment(
     return error ? [error] : [];
   });
 
+  const databaseUrl = env.DATABASE_URL?.trim();
+  if (!databaseUrl) {
+    errors.push("DATABASE_URL is required in production");
+  } else {
+    try {
+      const parsed = new URL(databaseUrl);
+      if (parsed.protocol !== "postgresql:" && parsed.protocol !== "postgres:") {
+        errors.push("DATABASE_URL must use the postgresql: or postgres: protocol");
+      }
+    } catch {
+      errors.push("DATABASE_URL must be a valid PostgreSQL URL");
+    }
+  }
+
   const redisUrl = env.REDIS_URL?.trim();
   if (!redisUrl) {
     errors.push("REDIS_URL is required in production");
@@ -76,6 +90,15 @@ export function validateProductionEnvironment(
     errors.push("COMMUNICATION_PROVIDER is required in production");
   } else if (communicationProvider !== "disabled") {
     errors.push("COMMUNICATION_PROVIDER is not supported by this build");
+  }
+
+
+  const trustedProxyHops = env.RATE_LIMIT_TRUSTED_PROXY_HOPS?.trim();
+  if (trustedProxyHops) {
+    const parsed = Number(trustedProxyHops);
+    if (!Number.isInteger(parsed) || parsed < 1) {
+      errors.push("RATE_LIMIT_TRUSTED_PROXY_HOPS must be a positive integer when configured");
+    }
   }
 
   for (let left = 0; left < PRODUCTION_SECRET_NAMES.length; left += 1) {

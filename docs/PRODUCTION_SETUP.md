@@ -27,6 +27,9 @@ Production validation rejects missing values, common placeholders, values
 shorter than 32 characters, and reuse between these three trust domains. Error
 messages identify the invalid variable but never include its value.
 
+Production validation also rejects a missing/malformed/non-PostgreSQL
+`DATABASE_URL` and an invalid configured `RATE_LIMIT_TRUSTED_PROXY_HOPS`.
+
 Store production values in the deployment platform's secret manager. Never put
 them in `.env.example`, a committed `.env*` file, a shell script, a support
 ticket, or application logs.
@@ -102,3 +105,10 @@ replicated deployments should use a Prisma-compatible pooled endpoint that
 preserves interactive transaction semantics. Restore testing and provider
 failover verification remain deployment responsibilities. Full migration and
 booking-concurrency details are in `docs/POSTGRESQL.md`.
+
+## Deployment and operations
+
+The recommended but unprovisioned pilot topology, CI/release sequence,
+connection-pool guidance, staging isolation and rollback procedure are in
+`docs/DEPLOYMENT.md`. Health checks, alerts, scheduler operation and backup/
+restore expectations are in `docs/OPERATIONS.md`.

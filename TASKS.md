@@ -65,9 +65,9 @@ before this audit.
       seed, full application suite, and real concurrency verification against
       PostgreSQL 17.11. Managed production provisioning remains a deployment
       task. See `docs/POSTGRESQL.md`.
-- [ ] CI pipeline (lint/typecheck/test/build/e2e on push — all currently
-      pass locally but only when run manually; see `docs/GOAL_AUDIT.md`
-      Critical Path item 8)
+- [x] Provider-neutral GitHub Actions CI: PostgreSQL 17 + Redis service
+      containers, migration deploy/status, typecheck, lint, Vitest, full
+      Playwright and production build. Deployment remains deliberately absent.
 
 ## 2. Database
 
@@ -503,8 +503,16 @@ before this audit.
 ## 16. Deployment
 
 - [x] `npm run build` (production Next.js build) passes
-- [ ] Dockerfile / hosting-specific deployment config
-- [ ] Production environment variable documentation beyond `.env.example`
+- [x] Production architecture evaluated and documented; Render is recommended
+      for the pilot but no account/resource has been created
+- [x] Provider-neutral liveness/readiness endpoints for app, PostgreSQL and Redis
+- [x] GitHub Actions verification workflow (no deployment credentials/actions)
+- [x] Production environment, release, migration, staging, backup, monitoring
+      and rollback documentation (`docs/DEPLOYMENT.md`, `docs/OPERATIONS.md`)
+- [ ] Create the selected hosting account/resources and provider-specific
+      configuration after user approval
+- [ ] Dockerfile / hosting-specific manifest (not justified for the recommended
+      native Node deployment; add only if the selected host requires it)
 - [ ] Managed production PostgreSQL instance provisioned, backed up, pooled,
       monitored, and migrated (local PostgreSQL 17.11 architecture is verified)
 

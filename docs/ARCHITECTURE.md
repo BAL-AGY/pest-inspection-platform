@@ -38,7 +38,7 @@ and report real numbers, over a polished-looking demo.
 | Validation | Zod | Shared validation for funnel input, API route input, and scoring/qualification rule definitions. |
 | Communications (email/SMS) | Provider-neutral outbound + inbound adapters; deterministic test adapter only | PostgreSQL reserves idempotent sends before provider calls, provider webhooks own signature verification, and tenant mapping/status/STOP processing are centralized. No live vendor or credential is fabricated. See `docs/COMMUNICATIONS.md`. |
 | Testing | Vitest (unit/integration) + Playwright (end-to-end) | Vitest covers scoring, qualification, scheduling/double-booking, attribution, and analytics calculations as pure, deterministic logic. Playwright drives the actual browser through the full lead→inspection→outcome journey against the running app. |
-| Deployment target | Node-compatible host running the Next.js production build (e.g. Vercel or a container) | No vendor contracted. `next build` / `next start` must pass; deployment config stays host-agnostic (env vars, no vendor-specific lock-in beyond what Next.js itself requires). |
+| Deployment target | Paid Render Node web service + managed PostgreSQL + managed Redis-compatible Key Value + cron (recommended, not provisioned) | Simplest single-platform pilot fit for long-lived Node, Prisma serializable transactions, shared rate limits, webhooks and scheduled jobs. Portable CI/health code is implemented; no vendor account or resource exists. See `docs/DEPLOYMENT.md`. |
 
 ## System architecture
 
@@ -443,9 +443,14 @@ when required real spend/revenue is absent. See `docs/ANALYTICS.md`.
 
 ### Deployment strategy
 
-See the Stack table above (Node-compatible host running `next build`/
-`next start`; no vendor contracted). No Dockerfile or hosting-specific
-config exists yet in this repo — see TASKS.md's Deployment milestone.
+The recommended pilot topology and alternatives are in `docs/DEPLOYMENT.md`.
+Provider-neutral GitHub Actions CI uses disposable PostgreSQL and Redis, and
+the application exposes separate liveness and dependency readiness routes.
+Production startup validates PostgreSQL/Redis URLs and independent secrets.
+No provider resource, deployment credential, Dockerfile, or auto-deploy workflow
+is committed; selecting and creating the external account remains an explicit
+operator decision. Operational alerts, backup/restore targets and incident
+behavior are defined in `docs/OPERATIONS.md`.
 
 ## Project structure
 

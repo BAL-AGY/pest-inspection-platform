@@ -9,6 +9,7 @@ const strongEnvironment = (): NodeJS.ProcessEnv => ({
   AUTH_SECRET: "auth_8CRvxgYQm4zkjS7f9uN2dL6pW3aT1hKe",
   FUNNEL_CAPABILITY_SECRET: "funnel_p2Tz7Jk5Xc9Qn4Vm8Ld1Wr6Hs3Ay0BgF",
   RATE_LIMIT_IDENTIFIER_SECRET: "ratelimit_M7kq4Pw9Xs2Fc8Vn5Dz1Ha6Rj3Te0LuB",
+  DATABASE_URL: "postgresql://database.internal.example/pest_inspection",
   REDIS_URL: "rediss://redis.internal.example:6379",
   COMMUNICATION_PROVIDER: "disabled",
   COMMUNICATION_JOB_SECRET: "job_4Vq8Nr2Xm7Ka9Ls1Dp6Tw3Hy5Bc0FzEe",
@@ -50,6 +51,26 @@ describe("production environment validation", () => {
     invalid.REDIS_URL = "https://redis.example";
     expect(validateProductionEnvironment(invalid)).toContain(
       "REDIS_URL must use the redis: or rediss: protocol",
+    );
+  });
+
+  it("requires a valid PostgreSQL URL in production", () => {
+    const missing = strongEnvironment();
+    delete missing.DATABASE_URL;
+    expect(validateProductionEnvironment(missing)).toContain("DATABASE_URL is required in production");
+
+    const invalid = strongEnvironment();
+    invalid.DATABASE_URL = "sqlite:./production.db";
+    expect(validateProductionEnvironment(invalid)).toContain(
+      "DATABASE_URL must use the postgresql: or postgres: protocol",
+    );
+  });
+
+  it("rejects an invalid trusted-proxy hop count", () => {
+    const env = strongEnvironment();
+    env.RATE_LIMIT_TRUSTED_PROXY_HOPS = "attacker-controlled";
+    expect(validateProductionEnvironment(env)).toContain(
+      "RATE_LIMIT_TRUSTED_PROXY_HOPS must be a positive integer when configured",
     );
   });
 
