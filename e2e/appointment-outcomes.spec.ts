@@ -77,11 +77,11 @@ test("marking a booked appointment as a no-show persists and is reflected in the
 
   await page.goto(`/dashboard/leads/${leadId}`);
   const appointmentRow = page.locator("div", { has: page.getByRole("button", { name: "No-show" }) }).first();
-  await expect(appointmentRow.getByText("booked", { exact: true })).toBeVisible();
+  await expect(appointmentRow.getByText("Booked", { exact: true })).toBeVisible();
 
   await appointmentRow.getByRole("button", { name: "No-show" }).click();
   await expect(page).toHaveURL(new RegExp(`/dashboard/leads/${leadId}$`));
-  await expect(page.getByText("no_show", { exact: true })).toBeVisible();
+  await expect(page.getByText("No-show", { exact: true })).toBeVisible();
 
   // The action buttons only render for status === "booked" — once
   // recorded as a no-show, they must disappear (no double-action).

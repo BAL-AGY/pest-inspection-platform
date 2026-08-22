@@ -2,7 +2,13 @@ import { notFound, redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { requireSession } from "@/lib/require-session";
 import { prisma } from "@/lib/prisma";
-import { LEAD_STATUSES } from "@/lib/pipeline";
+import {
+  APPOINTMENT_STATUS_LABELS,
+  LEAD_STATUS_LABELS,
+  LEAD_STATUSES,
+  type AppointmentStatus,
+  type LeadStatus,
+} from "@/lib/pipeline";
 import { cancelAppointmentAndNotify, completeAppointmentAndLog, markAppointmentNoShowAndLog } from "@/lib/appointment-actions";
 import { parseCompanyTimeZone } from "@/lib/company";
 import { formatInCompanyTime } from "@/lib/timezone";
@@ -206,7 +212,7 @@ export default async function LeadDetailPage({
         </div>
         <div>
           <p className="text-zinc-500">Status</p>
-          <p className="font-semibold">{lead.status}</p>
+          <p className="font-semibold">{LEAD_STATUS_LABELS[lead.status as LeadStatus] ?? lead.status}</p>
         </div>
         <div>
           <p className="text-zinc-500">ZIP</p>
@@ -287,7 +293,7 @@ export default async function LeadDetailPage({
                     timeZoneName: "short",
                   })}
                 </p>
-                <p className="text-zinc-500 text-xs">{a.status}</p>
+                <p className="text-zinc-500 text-xs">{APPOINTMENT_STATUS_LABELS[a.status as AppointmentStatus] ?? a.status}</p>
               </div>
               {a.status === "booked" && (
                 <div className="flex gap-2">
@@ -360,7 +366,7 @@ export default async function LeadDetailPage({
           <select name="status" defaultValue={lead.status} className="border border-zinc-300 rounded px-3 py-2 text-sm">
             {LEAD_STATUSES.map((s) => (
               <option key={s} value={s}>
-                {s}
+                {LEAD_STATUS_LABELS[s]}
               </option>
             ))}
           </select>

@@ -15,6 +15,17 @@ export const LEAD_STATUSES = [
 ] as const;
 export type LeadStatus = (typeof LEAD_STATUSES)[number];
 
+export const LEAD_STATUS_LABELS: Record<LeadStatus, string> = {
+  new: "New",
+  engaged: "Engaged",
+  mql: "MQL",
+  sql: "SQL",
+  inspection_booked: "Inspection Booked",
+  inspection_completed: "Inspection Completed",
+  customer_won: "Customer Won",
+  customer_lost: "Customer Lost",
+};
+
 export const LEAD_CLASSIFICATIONS = ["prospect", "mql", "sql"] as const;
 export type LeadClassification = (typeof LEAD_CLASSIFICATIONS)[number];
 
@@ -26,6 +37,14 @@ export const APPOINTMENT_STATUSES = [
   "completed",
 ] as const;
 export type AppointmentStatus = (typeof APPOINTMENT_STATUSES)[number];
+
+export const APPOINTMENT_STATUS_LABELS: Record<AppointmentStatus, string> = {
+  booked: "Booked",
+  rescheduled: "Rescheduled",
+  cancelled: "Cancelled",
+  no_show: "No-show",
+  completed: "Completed",
+};
 
 export const FUNNEL_EVENT_TYPES = [
   "landing_page_view",

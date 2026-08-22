@@ -2,18 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { requireSession } from "@/lib/require-session";
 import { prisma } from "@/lib/prisma";
-import { LEAD_STATUSES } from "@/lib/pipeline";
-
-const STATUS_LABELS: Record<string, string> = {
-  new: "New",
-  engaged: "Engaged",
-  mql: "MQL",
-  sql: "SQL",
-  inspection_booked: "Inspection Booked",
-  inspection_completed: "Inspection Completed",
-  customer_won: "Customer Won",
-  customer_lost: "Customer Lost",
-};
+import { LEAD_STATUS_LABELS, LEAD_STATUSES } from "@/lib/pipeline";
 
 export default async function LeadsPage() {
   const session = await requireSession();
@@ -39,7 +28,7 @@ export default async function LeadsPage() {
         {LEAD_STATUSES.map((status) => (
           <div key={status} className="min-w-64 flex-shrink-0">
             <h2 className="text-sm font-semibold text-zinc-500 uppercase mb-2">
-              {STATUS_LABELS[status]} ({byStatus.get(status)?.length ?? 0})
+              {LEAD_STATUS_LABELS[status]} ({byStatus.get(status)?.length ?? 0})
             </h2>
             <div className="flex flex-col gap-2">
               {(byStatus.get(status) ?? []).map((lead) => (

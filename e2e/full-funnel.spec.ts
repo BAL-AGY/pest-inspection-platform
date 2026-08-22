@@ -160,7 +160,7 @@ test("real prospect moves through the full acquisition-to-outcome journey", asyn
 
   // 19. Mark the inspection completed from the CRM.
   await page.getByRole("button", { name: /mark completed/i }).click();
-  await expect(page.getByText("completed", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("Completed", { exact: true }).first()).toBeVisible();
 
   // 20. Mark the customer Won with a contract value.
   await page.locator('input[name="contractValue"]').fill("450.00");
