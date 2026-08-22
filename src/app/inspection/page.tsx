@@ -577,7 +577,7 @@ function QuestionCard({
             maxLength={5}
             required
             placeholder="ZIP code"
-            className="flex-1 border border-zinc-300 rounded-md px-4 py-3 text-lg"
+            className="min-w-0 flex-1 border border-zinc-300 rounded-md px-4 py-3 text-lg"
             value={zip}
             onChange={(e) => setZip(e.target.value)}
             autoFocus

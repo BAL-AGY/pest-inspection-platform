@@ -371,7 +371,7 @@ export default async function LeadDetailPage({
       <section>
         <h2 className="text-sm font-semibold text-zinc-500 uppercase mb-2">Notes</h2>
         <form action={addNote} className="flex gap-2 mb-3">
-          <input name="body" placeholder="Add a note…" className="flex-1 border border-zinc-300 rounded px-3 py-2 text-sm" />
+          <input name="body" placeholder="Add a note…" className="min-w-0 flex-1 border border-zinc-300 rounded px-3 py-2 text-sm" />
           <button className="text-sm rounded bg-zinc-800 text-white px-4 py-2">Add</button>
         </form>
         <div className="flex flex-col gap-2">
