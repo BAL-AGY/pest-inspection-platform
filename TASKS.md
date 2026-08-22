@@ -178,19 +178,17 @@ before this audit.
       by the same token check Step 17 already requires — no new
       visitorId-based lookup added. See `e2e/funnel-resume.spec.ts` and
       `docs/GOAL_AUDIT.md` Critical Path item 20.
-- [ ] **(found, NOT fixed — autonomous session, needs its own adversarial
-      review before implementation)** Duplicate-lead race: two concurrent
-      `POST /api/leads` calls with no `leadId` (same `visitorId`) create
-      two separate `Lead` rows instead of one — confirmed via a direct
-      probe. No cross-visitor security impact (each caller only gets a
-      token for the lead it created), but real duplicate-row data-hygiene
-      impact under scripted/bot concurrent submission or network retries;
-      normal UI usage is already protected by `disabled={submitting}`.
-      Deliberately not fixed this session — the natural fix (briefly
-      reusing `visitorId` to collapse concurrent creates) is structurally
-      close to the exact pattern Step 17 closed as a hijack vector, and
-      this code path has already had two rounds of adversarial review.
-      See `docs/GOAL_AUDIT.md` Critical Path item 21 for full detail.
+- [x] **(fixed 2026-08-22 — autonomous session)** Duplicate-lead race:
+      two concurrent `POST /api/leads` calls with no `leadId` (same
+      `visitorId`) used to create two separate `Lead` rows instead of
+      one. Fixed with a client-generated, single-use idempotency nonce
+      (`Lead.creationNonce`, unique-constrained, nullable) instead of the
+      rejected `visitorId`-lookup approach — see `docs/GOAL_AUDIT.md`
+      Critical Path item 21 for the full design and
+      `e2e/duplicate-lead-race.spec.ts` for the three regression
+      scenarios (same-nonce race collapses to one row; different-nonce
+      concurrent requests still create two; a stranger with the victim's
+      `visitorId` but not their nonce still cannot attach to it).
 - [x] **(fixed — Step 21)** Production credential and seed hardening.
       `src/lib/environment.ts` centrally requires strong, independent
       `AUTH_SECRET`, `FUNNEL_CAPABILITY_SECRET`, and

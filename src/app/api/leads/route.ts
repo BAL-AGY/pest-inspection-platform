@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import {
   getActiveCompany,
@@ -56,6 +57,12 @@ const upsertSchema = z.object({
   // Required whenever leadId is supplied — proves this caller is the
   // visitor who actually owns that lead (see src/lib/funnel-capability.ts).
   leadToken: z.string().nullable().optional(),
+  // Optional, client-generated (crypto.randomUUID(), one per page load)
+  // idempotency key for the very first create call of a funnel attempt —
+  // see the Lead.creationNonce schema comment and the P2002 handling
+  // below for why this is safe and how it collapses a duplicate-submit
+  // race onto one Lead row without any visitorId-based lookup.
+  creationNonce: z.string().min(1).max(100).nullable().optional(),
   answers: z.record(z.string(), z.unknown()).optional(),
   contact: contactSchema.optional(),
   attribution: attributionSchema.optional(),
@@ -87,7 +94,7 @@ async function saveLead(req: NextRequest) {
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
   }
-  const { visitorId, leadId, leadToken, answers, contact, attribution, smsConsent, emailConsent, smsMarketingConsent, emailMarketingConsent } =
+  const { visitorId, leadId, leadToken, creationNonce, answers, contact, attribution, smsConsent, emailConsent, smsMarketingConsent, emailMarketingConsent } =
     parsed.data;
 
   const network = trustedClientAddress(req);
@@ -249,6 +256,11 @@ async function saveLead(req: NextRequest) {
   const data = {
     companyId: company.id,
     isDemo: company.isDemo,
+    // Only meaningful (and only ever set) on the initial create — carried
+    // forward unchanged on every later update. See the P2002 handling
+    // below for how this is actually used to collapse a duplicate-submit
+    // race onto one row.
+    creationNonce: existing ? existing.creationNonce : creationNonce ?? null,
     // Frozen after creation — a continuation request's visitorId is never
     // trusted to overwrite the lead's real, ownership-token-bound
     // visitorId (see src/lib/funnel-capability.ts).
@@ -354,9 +366,35 @@ async function saveLead(req: NextRequest) {
     optedOutAt: existing?.optedOutAt,
   };
 
-  const lead = existing
-    ? await prisma.lead.update({ where: { id: existing.id }, data })
-    : await prisma.lead.create({ data });
+  let lead;
+  if (existing) {
+    lead = await prisma.lead.update({ where: { id: existing.id }, data });
+  } else {
+    try {
+      lead = await prisma.lead.create({ data });
+    } catch (err) {
+      // Two near-simultaneous "no leadId" creates from the exact same
+      // page load (double-click, network retry) race here — the loser
+      // hits this unique-constraint conflict on creationNonce. A nonce
+      // match is sufficient proof of common origin: it's a fresh,
+      // unguessable, single-use value the client only ever sends once
+      // (unlike visitorId, which is long-lived and NEVER used to look up
+      // an existing lead — see the Step 17 fix this deliberately does not
+      // touch). Fall back to the winner's row instead of erroring; every
+      // downstream event write below uses an idempotent eventKey keyed
+      // off `lead.id`, so re-deriving them against the winner's row is a
+      // safe no-op, not a duplicate.
+      const isNonceConflict =
+        creationNonce &&
+        err instanceof Prisma.PrismaClientKnownRequestError &&
+        err.code === "P2002" &&
+        (err.meta?.target as string[] | undefined)?.includes("creationNonce");
+      if (!isNonceConflict) throw err;
+      const winner = await prisma.lead.findUnique({ where: { creationNonce } });
+      if (!winner) throw err;
+      lead = winner;
+    }
+  }
 
   const eventAttribution = attributionFromLead(lead);
   if (isNew) {

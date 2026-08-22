@@ -166,6 +166,17 @@ model Lead {
   lastTouchAt     DateTime? @db.Timestamptz(3)
   visitorId       String? // anonymous id set pre-identification, links to FunnelEvents
 
+  // Single-use, client-generated (crypto.randomUUID(), never persisted to
+  // localStorage, never reused across page loads) idempotency key for the
+  // very first `POST /api/leads` of a funnel attempt, when no leadId
+  // exists yet. Lets two near-simultaneous requests from the SAME page
+  // load (double-click, network retry) collapse onto one Lead row via a
+  // database-level unique constraint, without any visitorId-based lookup
+  // — visitorId is long-lived and NEVER used to find/reattach an existing
+  // lead (see docs/ARCHITECTURE.md "Public funnel ownership" / Step 17).
+  // Null after the first successful create; never read or written again.
+  creationNonce String? @unique
+
   // Communications consent (TCPA/CAN-SPAM boundaries)
   smsConsent                  Boolean   @default(false)
   smsConsentAt                DateTime? @db.Timestamptz(3)

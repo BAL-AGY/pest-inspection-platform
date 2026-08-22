@@ -31,6 +31,14 @@ interface LeadState {
 }
 
 export default function InspectionFunnelPage() {
+  // A single-use idempotency key for this page load's very first lead
+  // create call — lets the server collapse a duplicate-submit race
+  // (double-click, network retry) onto one Lead row. Generated once in
+  // memory only, never persisted to localStorage, and irrelevant once
+  // `lead.id` is set (every later request has a real leadId to continue
+  // with instead). See src/app/api/leads/route.ts's P2002 handling and
+  // the Lead.creationNonce schema comment for the full design.
+  const [creationNonce] = useState(() => crypto.randomUUID());
   const [answers, setAnswers] = useState<QualificationAnswers>({});
   const [lead, setLead] = useState<LeadState>({
     id: null,
@@ -160,6 +168,7 @@ export default function InspectionFunnelPage() {
           visitorId: getOrCreateVisitorId(),
           leadId: lead.id,
           leadToken: lead.token,
+          creationNonce,
           answers: next,
           attribution: attributionFromLocation(),
         }),

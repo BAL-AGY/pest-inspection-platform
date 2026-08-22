@@ -78,6 +78,12 @@ same way Steps 15 and 17 were handled, not a same-session patch. Tracked
 as a Critical Path item below (P2, not P0/P1 — no security impact, real
 but narrow data-quality impact only).
 
+**2026-08-22 addendum: fixed.** A later session found a fix shape that
+avoids the `visitorId`-lookup concern raised above entirely — a
+client-generated, single-use idempotency nonce, never a `visitorId`
+lookup. See Critical Path item 21 below for the full design and its
+regression test.
+
 ## Method — what was actually run, not just read
 
 Every status below is backed by either (a) reading the real code and schema,
@@ -479,19 +485,35 @@ work today; items 7+ build toward a safe production launch.
     contact/lead state on mount via a no-op resume call authenticated by the
     same `leadId`+`leadToken` pair Step 17 already requires (no new
     visitorId-based lookup introduced). See `e2e/funnel-resume.spec.ts`.
-21. **Duplicate-lead race on concurrent first-answer submission — found,
-    NOT fixed, needs its own adversarial review.** Two concurrent
-    `POST /api/leads` calls with no `leadId` (same `visitorId`) create two
-    separate `Lead` rows instead of one, confirmed by a direct probe.
-    Expected consequence of the Step 17 fix (see the 2026-08-21 addendum
-    above for full detail). No cross-visitor security impact — each caller
-    only gets a token for the lead it created — but real data-hygiene
-    impact (duplicate rows) under scripted/bot concurrent submission or
-    network retries; normal UI usage is already protected by
-    `disabled={submitting}`. Deliberately not fixed this session: the
-    natural fix shape (briefly reusing `visitorId` to collapse concurrent
-    creates) is structurally close to the exact pattern Step 17 closed as a
-    hijack vector, and this exact code path has already had two rounds of
-    adversarial review — a third same-session, unreviewed change to it is
-    a bigger risk than the bug itself. P2: real but narrow, no security
-    impact.
+21. ~~**Duplicate-lead race on concurrent first-answer submission**~~
+    **FIXED (2026-08-22, autonomous session).** Two concurrent
+    `POST /api/leads` calls with no `leadId` (same `visitorId`) used to
+    create two separate `Lead` rows instead of one. The obvious fix
+    (briefly reusing `visitorId` to collapse concurrent creates) was
+    deliberately rejected the same session this was found, because it is
+    structurally the same pattern Step 17 closed as a hijack vector.
+    Instead: the client now generates a fresh, single-use,
+    cryptographically random idempotency key
+    (`crypto.randomUUID()`, in-memory only, never persisted to
+    localStorage, never reused across page loads) once per page load and
+    sends it only on the very first "no leadId" request. A new database-
+    level unique constraint, `Lead.creationNonce` (nullable —
+    multiple `NULL`s never conflict, so a client that doesn't send one
+    behaves exactly as before), guarantees at most one `Lead` row per
+    nonce; the loser of a genuine race catches the `P2002` constraint
+    violation and returns the winner's row (with its own freshly issued
+    token) instead of erroring. This is **not** a `visitorId`-based
+    lookup: a stranger who knows or guesses another visitor's
+    `visitorId` still cannot attach to their lead, since they don't know
+    the victim's single-use nonce — proven directly by a regression test.
+    `e2e/duplicate-lead-race.spec.ts` covers three scenarios: (1) two
+    truly concurrent requests with the *same* nonce collapse onto one
+    `Lead` row and both callers' issued tokens work for continuing it;
+    (2) two concurrent requests with *different* nonces (genuinely
+    different page loads) still create two separate leads, proving the
+    fix isn't over-broad; (3) a caller who supplies a stranger's
+    `visitorId` without their nonce never attaches to the stranger's
+    lead — the original Step 17 invariant, still intact. Sanity-checked
+    by temporarily disabling the `P2002` recovery path and confirming
+    scenario (1) fails with a raw 500, then reverted. Migration:
+    `prisma/migrations/20260822002019_add_lead_creation_nonce`.

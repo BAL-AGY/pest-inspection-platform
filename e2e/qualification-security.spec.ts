@@ -246,5 +246,17 @@ test.describe("server-authoritative qualification", () => {
     });
     expect(booking.status()).toBe(403);
     expect(await prisma.appointment.count({ where: { leadId: session.leadId! } })).toBe(0);
+
+    // This test deliberately tampers the row directly via Prisma to a
+    // maximal score/SQL classification it never legitimately earned (the
+    // whole point is proving the API doesn't trust it). Left uncleaned,
+    // that fake score: 999 row permanently outranks every real lead in
+    // the owner dashboard's "needs your attention" worklist
+    // (src/lib/dashboard-metrics.ts needsFollowUp, ordered by score desc)
+    // on every subsequent test run against this same local dev DB —
+    // this is exactly what caused e2e/dashboard-follow-up.spec.ts to
+    // start failing after repeated full-suite runs. Delete it now that
+    // the assertions above are done with it.
+    await prisma.lead.delete({ where: { id: session.leadId! } });
   });
 });
