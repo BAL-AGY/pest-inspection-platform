@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_PEST_CATEGORIES,
+  SERVICE_ARRANGEMENTS,
   formatPotentialValueRange,
   parsePestCategories,
   parseServiceArrangements,
@@ -13,8 +14,10 @@ describe("service catalog", () => {
     expect(pestCategoryForConcern(DEFAULT_PEST_CATEGORIES, "fleas")?.id).toBe("fleas");
     expect(pestCategoryForConcern(DEFAULT_PEST_CATEGORIES, "termites")?.id).toBe("other");
     expect(formatPotentialValueRange(DEFAULT_PEST_CATEGORIES.find((item) => item.id === "general_pest")!)).toBe("$200–$1,000");
+    expect(formatPotentialValueRange(DEFAULT_PEST_CATEGORIES.find((item) => item.id === "fleas")!)).toBe("$400–$1,000");
     expect(formatPotentialValueRange(DEFAULT_PEST_CATEGORIES.find((item) => item.id === "rodents")!)).toBe("$250–$5,000+");
     expect(formatPotentialValueRange(DEFAULT_PEST_CATEGORIES.find((item) => item.id === "other")!)).toBeNull();
+    expect(SERVICE_ARRANGEMENTS).toEqual(["ONE_TIME", "QUARTERLY", "BIMONTHLY"]);
   });
 
   it("uses validated company configuration and safely falls back for malformed data", () => {
