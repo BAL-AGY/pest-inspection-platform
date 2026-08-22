@@ -517,3 +517,28 @@ work today; items 7+ build toward a safe production launch.
     by temporarily disabling the `P2002` recovery path and confirming
     scenario (1) fails with a raw 500, then reverted. Migration:
     `prisma/migrations/20260822002019_add_lead_creation_nonce`.
+
+**Operational note (2026-08-22, autonomous session): local dev database
+booking capacity is currently exhausted, blocking several booking-
+dependent e2e tests.** Not a code defect — `e2e/booking-security.spec.ts`'s
+capacity test, which reads the real business-hours-derived daily slot
+ceiling (`company.maxDailyInspections`, currently 8/weekday against a
+9-slot physical ceiling from 8am–5pm business hours) dynamically at
+runtime, passes cleanly. The default public availability search window
+is 14 days (`src/app/api/availability/route.ts`); this long-running
+local session's cumulative test executions have booked enough real
+appointments that window is now fully saturated, so any test that books
+a fresh appointment (`full-funnel.spec.ts`, `communication-log.spec.ts`,
+parts of `rate-limit.spec.ts` and `appointment-outcomes.spec.ts`) fails
+at the "no slots available" step. This is a **local-only, long-lived-
+database artifact** — the GitHub Actions CI pipeline provisions a fresh,
+disposable PostgreSQL for every run and is unaffected. It self-resolves
+with `npx prisma migrate reset --force && npm run db:seed` (a normal,
+low-risk local maintenance operation — this session's automated
+permission gate treats bulk local-database mutations as requiring
+explicit human awareness even when scoped to a database with no real
+seeded data to lose, so this was left for the operator rather than run
+autonomously). The affected tests' own logic was independently verified
+correct up to the exhausted step (e.g., `full-funnel.spec.ts`'s new
+ROAS/CAC assertions were confirmed against real accumulated historical
+dashboard data before this point, not left unverified).

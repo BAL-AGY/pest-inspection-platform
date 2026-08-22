@@ -1,12 +1,27 @@
 import { test, expect } from "@playwright/test";
 
 /**
- * Drives the real, required end-to-end journey (docs/ARCHITECTURE.md /
- * TASKS.md "definition of done"): traffic → landing → qualification →
- * contact capture → lead scoring/MQL/SQL → scheduling with double-booking
- * prevention → CRM/pipeline → inspection outcome → dashboard/analytics
- * update. Runs against the real dev server and real PostgreSQL test database —
- * nothing here is mocked.
+ * THE DEMETRIUS ACCEPTANCE TEST — the single, canonical, repeatable proof
+ * that "this prototype actually works end to end," matching every stage
+ * the pest control company owner would walk through in a real acceptance
+ * session: campaign URL with attribution → landing page → funnel start →
+ * service area → pest problem → severity/urgency → homeowner/property →
+ * contact info → qualification → availability → inspection booking →
+ * confirmation → persisted lead → persisted appointment → persisted
+ * attribution → owner login → lead visible in dashboard → appointment
+ * visible (pipeline + calendar) → mark inspection complete → mark
+ * customer won → record service arrangement → record actual contract
+ * value → associate marketing spend → verify analytics/revenue/CAC/ROAS
+ * update correctly, both as dashboard summary stats and per-campaign
+ * attribution. Also proves things a demo walkthrough wouldn't: the
+ * public funnel never leaks the internal "Potential Value Range" to a
+ * homeowner (only staff, in the CRM, see it), double-booking is
+ * atomically prevented for a second independent lead, and a staff-only
+ * write endpoint rejects an invalid pest category/service arrangement.
+ * Runs against the real dev server and real PostgreSQL test database —
+ * nothing here is mocked or requires a paid external service. See
+ * docs/ARCHITECTURE.md / TASKS.md "definition of done" for the origin
+ * of this journey definition.
  */
 
 const OWNER_EMAIL = process.env.SEED_OWNER_EMAIL ?? "owner@example.com";
@@ -193,6 +208,12 @@ test("real prospect moves through the full acquisition-to-outcome journey", asyn
   await page.goto("/dashboard");
   await expect(page.getByText("Cost per qualified booked inspection", { exact: true }).locator("..")).toContainText(/\$\d/);
   await expect(page.getByText("Cost per qualified lead").locator("..")).toContainText(/\$\d/);
+  await expect(page.getByText("Customer acquisition cost", { exact: true }).locator("..")).toContainText(/\$\d/);
+  // "ROAS" also labels a table column further down the same page — scope
+  // to the summary-stat section (the same disambiguation pattern used for
+  // "Close rate" below) so this can't silently match the wrong element.
+  const marketingEfficiency = page.getByRole("heading", { name: "Marketing efficiency" }).locator("..");
+  await expect(marketingEfficiency.getByText("ROAS", { exact: true }).locator("..")).toContainText(/\d\.\d\dx/);
   await expect(page.getByText("Lead to qualified").locator("..")).toContainText(/%/);
   await expect(page.getByText("Qualified to booked").locator("..")).toContainText(/%/);
   await expect(page.getByText("Show rate").locator("..")).toContainText(/%/);
@@ -202,4 +223,7 @@ test("real prospect moves through the full acquisition-to-outcome journey", asyn
   const attributedCampaignRow = page.getByRole("row", { name: /google \/ cpc.*e2e_playwright/i });
   await expect(attributedCampaignRow).toBeVisible();
   await expect(attributedCampaignRow).toContainText(/\$450\.00|\$\d/);
+  // The same campaign row must also carry a real, computed ROAS, not a
+  // blank/unavailable cell, once both spend and revenue exist for it.
+  await expect(attributedCampaignRow).toContainText(/\d\.\d\dx/);
 });
