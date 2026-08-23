@@ -193,14 +193,19 @@ test("real prospect moves through the full acquisition-to-outcome journey", asyn
   await expect(page.getByText("Customers won", { exact: true }).first().locator("..")).toContainText(/[1-9]/);
   await expect(page.getByText("Revenue attributed", { exact: true }).locator("..")).toContainText(/\$\d/);
 
+  // Fund the SAME campaign the lead was attributed to (source/medium/campaign
+  // must match the funnel's utm_source/utm_medium/utm_campaign exactly) —
+  // campaign-level ROAS below is grouped by that exact tuple, so spend filed
+  // under an unrelated one-off source would never join the attributed row.
   await page.goto("/dashboard/marketing");
-  const spendMarker = `e2e-${Date.now()}`;
-  await page.locator('input[name="source"]').fill(spendMarker);
+  await page.locator('input[name="source"]').fill("google");
+  await page.locator('input[name="medium"]').fill("cpc");
+  await page.locator('input[name="campaign"]').fill("e2e_playwright");
   await page.locator('input[name="periodStart"]').fill("2026-08-01");
   await page.locator('input[name="periodEnd"]').fill("2026-08-31");
   await page.locator('input[name="amount"]').fill("100.00");
   await page.getByRole("button", { name: /add spend entry/i }).click();
-  await expect(page.getByText(spendMarker)).toBeVisible();
+  await expect(page.getByText("google — e2e_playwright").first()).toBeVisible();
 
   // Once any real spend exists, cost-per-booked-inspection must be a real
   // computed number (never "no data yet" once both spend and a booking
