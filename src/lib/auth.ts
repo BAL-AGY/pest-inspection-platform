@@ -4,11 +4,12 @@ import bcrypt from "bcryptjs";
 import { prisma } from "./prisma";
 import { assertProductionEnvironment } from "./environment";
 
-// Runtime defense in depth for code paths that load Auth.js without the
-// Next.js instrumentation hook (custom servers, scripts, or changed hosting).
-assertProductionEnvironment();
-
-export const { handlers, auth, signIn, signOut } = NextAuth({
+const {
+  handlers,
+  auth: nextAuthAuth,
+  signIn: nextAuthSignIn,
+  signOut: nextAuthSignOut,
+} = NextAuth({
   session: { strategy: "jwt" },
   pages: { signIn: "/login" },
   providers: [
@@ -57,3 +58,30 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     },
   },
 });
+
+// Runtime defense in depth for code paths that load Auth.js without the
+// Next.js instrumentation hook (custom servers, scripts, or changed
+// hosting). Deferred to first actual call rather than module import time:
+// `next build` imports this module (via dashboard pages -> requireSession)
+// while collecting page data, and NODE_ENV is forced to "production" for
+// that step regardless of deployment target, which would otherwise throw
+// during every staging/CI build.
+export { handlers };
+
+// Narrowed to the zero-argument overload: every call site in this
+// repository resolves the session this way (`await auth()`), and
+// NextAuth's other overloads (middleware, API-route wrapping) aren't used.
+export async function auth() {
+  assertProductionEnvironment();
+  return nextAuthAuth();
+}
+
+export const signIn: typeof nextAuthSignIn = (...args: Parameters<typeof nextAuthSignIn>) => {
+  assertProductionEnvironment();
+  return nextAuthSignIn(...args);
+};
+
+export const signOut: typeof nextAuthSignOut = (...args: Parameters<typeof nextAuthSignOut>) => {
+  assertProductionEnvironment();
+  return nextAuthSignOut(...args);
+};
