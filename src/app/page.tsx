@@ -43,6 +43,11 @@ export default async function LandingPage({
         <div className="flex justify-center pt-2">
           <TrackedInspectionCta href={inspectionHref} />
         </div>
+        <ul className="flex flex-wrap justify-center gap-x-5 gap-y-1 text-xs font-medium text-zinc-500">
+          <li>No payment info required</li>
+          <li>No obligation to buy</li>
+          <li>Takes about 2 minutes</li>
+        </ul>
         <p className="text-sm text-zinc-500">
           Already work with another pest control company? We offer free
           second opinions too.

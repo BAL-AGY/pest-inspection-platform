@@ -6,6 +6,7 @@ import {
   SWITCHER_DISCLAIMER,
   getNextQuestion,
   parseStoredQualificationAnswers,
+  visibleQuestionCount,
 } from "@/lib/qualification";
 import type { QualificationAnswers } from "@/lib/scoring";
 import { homeownerApiError, readJsonObject } from "@/lib/http-response";
@@ -359,10 +360,11 @@ export default function InspectionFunnelPage() {
     }
   }
 
+  const totalVisibleQuestions = visibleQuestionCount(answers);
   const progress = Math.min(
     100,
     Math.round(
-      (Object.keys(answers).length / QUALIFICATION_QUESTIONS.length) * 100,
+      (Object.keys(answers).length / totalVisibleQuestions) * 100,
     ),
   );
 
@@ -378,8 +380,8 @@ export default function InspectionFunnelPage() {
       <div className="flex-1 flex flex-col justify-center px-6 py-12 max-w-xl mx-auto w-full gap-6">
         {stage === "questions" && (
           <p className="text-xs font-medium text-zinc-400">
-            Question {Math.min(Object.keys(answers).length + 1, QUALIFICATION_QUESTIONS.length)} of{" "}
-            {QUALIFICATION_QUESTIONS.length}
+            Question {Math.min(Object.keys(answers).length + 1, totalVisibleQuestions)} of{" "}
+            {totalVisibleQuestions}
           </p>
         )}
         {funnelError && (
@@ -523,13 +525,18 @@ export default function InspectionFunnelPage() {
         )}
 
         {stage === "confirmed" && (
-          <div className="flex flex-col gap-3 text-center">
+          <div className="flex flex-col gap-4 text-center">
             <h2 className="text-2xl font-bold">You&apos;re booked! 🎉</h2>
+            <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3">
+              <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700">
+                Your free inspection
+              </p>
+              <p className="mt-1 text-lg font-semibold text-emerald-900">{confirmedWhen}</p>
+            </div>
             <p className="text-zinc-600">
-              Your free home inspection is confirmed for {confirmedWhen}.
               {consent.email || consent.sms
-                ? " We'll send you a confirmation and reminders before your appointment."
-                : " Save the date — you didn't opt in to email or text reminders, so please add it to your own calendar."}
+                ? "We'll send you a confirmation and reminders before your appointment."
+                : "You didn't opt in to email or text reminders, so please add this to your own calendar."}
             </p>
             <p className="text-sm text-zinc-500">
               A local technician will visit at that time to inspect the property before recommending

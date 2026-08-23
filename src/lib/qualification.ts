@@ -153,6 +153,16 @@ export function isFunnelComplete(answers: QualificationAnswers): boolean {
 }
 
 /**
+ * How many questions this homeowner will actually be asked, given what's
+ * known so far. Conditional questions (e.g. switchReason) are only counted
+ * once the answer that determines them is in — before that they're excluded,
+ * so a progress display never counts a question that may end up skipped.
+ */
+export function visibleQuestionCount(answers: QualificationAnswers): number {
+  return QUALIFICATION_QUESTIONS.filter((question) => !question.showIf || question.showIf(answers)).length;
+}
+
+/**
  * Service-area validation: a lead only qualifies for a bookable inspection
  * if their ZIP is one the company actually services.
  */
