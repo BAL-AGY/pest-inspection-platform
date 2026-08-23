@@ -106,6 +106,26 @@ describe("deduplicated funnel and drop-off reporting", () => {
     expect(rows[1].reached).toBe(0);
     expect(rows[2]).toMatchObject({ reached: 1, completed: 1 });
   });
+
+  it("never reports a completion rate above 100% when older rows predate routing metadata", () => {
+    // v1 answered via routing metadata (current code path). v2 and v3
+    // answered the same step but their prior-question event has no
+    // nextQuestionId (e.g. seeded/legacy data) — hasExplicitRouting still
+    // flips on globally because of v1, which must not make v2/v3 look like
+    // they never reached a step they demonstrably completed.
+    const routed = { ...event("qualification_question_answered", "v1", "l1", "hasExistingProvider"), metadata: JSON.stringify({ nextQuestionId: "timeline" }) };
+    const events = [
+      event("funnel_started", "v1"), routed, event("qualification_question_answered", "v1", "l1", "timeline"),
+      event("funnel_started", "v2"), event("qualification_question_answered", "v2", "l2", "timeline"),
+      event("funnel_started", "v3"), event("qualification_question_answered", "v3", "l3", "timeline"),
+    ];
+    const rows = computeQuestionDropOff(events, ["hasExistingProvider", "timeline"]);
+    const timeline = rows[1];
+    expect(timeline.completed).toBe(3);
+    expect(timeline.reached).toBeGreaterThanOrEqual(timeline.completed);
+    expect(timeline.conversion).not.toBeGreaterThan(1);
+    expect(timeline.abandoned).toBe(0);
+  });
 });
 
 describe("computeCostMetrics", () => {

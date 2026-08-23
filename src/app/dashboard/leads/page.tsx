@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { requireSession } from "@/lib/require-session";
 import { prisma } from "@/lib/prisma";
 import { LEAD_STATUS_LABELS, LEAD_STATUSES } from "@/lib/pipeline";
+import { humanizePestLabel } from "@/lib/service-catalog";
 
 export default async function LeadsPage() {
   const session = await requireSession();
@@ -43,7 +44,7 @@ export default async function LeadsPage() {
                       : "Unnamed lead"}
                   </p>
                   <p className="text-xs text-zinc-500 mt-1">
-                    {lead.pestConcern ?? "—"} · score {lead.score}
+                    {humanizePestLabel(lead.pestConcern)} · score {lead.score}
                   </p>
                   {lead.source && (
                     <p className="text-xs text-zinc-400 mt-1">{lead.source}</p>

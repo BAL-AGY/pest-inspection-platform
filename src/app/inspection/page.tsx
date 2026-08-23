@@ -376,6 +376,12 @@ export default function InspectionFunnelPage() {
       </div>
 
       <div className="flex-1 flex flex-col justify-center px-6 py-12 max-w-xl mx-auto w-full gap-6">
+        {stage === "questions" && (
+          <p className="text-xs font-medium text-zinc-400">
+            Question {Math.min(Object.keys(answers).length + 1, QUALIFICATION_QUESTIONS.length)} of{" "}
+            {QUALIFICATION_QUESTIONS.length}
+          </p>
+        )}
         {funnelError && (
           <p role="alert" className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-red-700">
             {funnelError}
@@ -393,7 +399,7 @@ export default function InspectionFunnelPage() {
         {stage === "contact" && (
           <form onSubmit={submitContact} className="flex flex-col gap-4">
             <h2 className="text-2xl font-bold">Almost done — where should we send your inspection details?</h2>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <input
                 required
                 placeholder="First name"
@@ -484,7 +490,7 @@ export default function InspectionFunnelPage() {
                 {bookingError}
               </p>
             )}
-            <div className="grid grid-cols-2 gap-2 max-h-96 overflow-y-auto">
+            <div className="grid grid-cols-1 gap-2 max-h-96 overflow-y-auto sm:grid-cols-2">
               {slots.map((slot) => (
                 <button
                   key={slot.start}
@@ -520,8 +526,15 @@ export default function InspectionFunnelPage() {
           <div className="flex flex-col gap-3 text-center">
             <h2 className="text-2xl font-bold">You&apos;re booked! 🎉</h2>
             <p className="text-zinc-600">
-              Your free home inspection is confirmed for {confirmedWhen}. We&apos;ll send you a
-              confirmation and reminders.
+              Your free home inspection is confirmed for {confirmedWhen}.
+              {consent.email || consent.sms
+                ? " We'll send you a confirmation and reminders before your appointment."
+                : " Save the date — you didn't opt in to email or text reminders, so please add it to your own calendar."}
+            </p>
+            <p className="text-sm text-zinc-500">
+              A local technician will visit at that time to inspect the property before recommending
+              any treatment or pricing. Nothing is charged today, and there&apos;s no obligation to
+              purchase.
             </p>
           </div>
         )}

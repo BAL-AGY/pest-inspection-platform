@@ -4,6 +4,7 @@ import { requireSession } from "@/lib/require-session";
 import { prisma } from "@/lib/prisma";
 import { parseCompanyTimeZone } from "@/lib/company";
 import { companyCalendarRange, formatInCompanyTime, localDateKey } from "@/lib/timezone";
+import { humanizePestLabel } from "@/lib/service-catalog";
 
 const RANGE_DAYS: Record<string, number> = { day: 1, week: 7, month: 30 };
 
@@ -94,7 +95,7 @@ export default async function CalendarPage({
                         : "Unnamed lead"}
                     </p>
                     <p className="text-zinc-500 text-xs">
-                      {a.lead.zipCode ?? "—"} · {a.lead.pestConcern ?? "—"}
+                      {a.lead.zipCode ?? "—"} · {humanizePestLabel(a.lead.pestConcern)}
                     </p>
                   </div>
                   <span className="text-xs uppercase text-zinc-500">{a.status}</span>

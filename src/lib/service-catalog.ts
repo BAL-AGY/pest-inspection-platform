@@ -91,3 +91,16 @@ export function serviceArrangementLabel(value: string | null | undefined): strin
   if (value === "BIMONTHLY") return "Bi-monthly service";
   return "—";
 }
+
+/**
+ * Owner-facing surfaces (pipeline board, calendar, dashboard widgets) show a
+ * lead's raw pestConcern/pestCategory value, which is stored as the
+ * funnel's internal snake_case id (e.g. "general_pest"). The Lead Detail
+ * page already resolves this through pestCategoryForConcern()'s configured
+ * label; this is the same "General Pest" formatting for the simpler spots
+ * that only have the bare string, not a full company category config.
+ */
+export function humanizePestLabel(value: string | null | undefined): string {
+  if (!value) return "—";
+  return value.replace(/_/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+}

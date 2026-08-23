@@ -49,7 +49,14 @@ export function computeQuestionDropOff(events: AnalyticsEvent[], questionOrder: 
       try { return JSON.parse(event.metadata ?? "null")?.nextQuestionId === step; } catch { return false; }
     }).map(entityKey)).size;
     const legacyReach = new Set(events.filter((event) => event.eventType === "qualification_question_answered" && event.funnelStep === questionOrder[index - 1]).map(entityKey)).size;
-    const reached = index === 0 ? starts : hasExplicitRouting ? explicitReach : legacyReach;
+    const rawReached = index === 0 ? starts : hasExplicitRouting ? explicitReach : legacyReach;
+    // Completing a step is proof of having reached it. Routing metadata was
+    // added after this funnel shipped, so older answered-question rows from
+    // before that change (or from any path that skips recording it) have no
+    // nextQuestionId to count toward explicitReach — undercounting reached
+    // below completed and showing a >100% completion rate. completed is
+    // always a valid lower bound for reached regardless of data vintage.
+    const reached = Math.max(rawReached, completed);
     return { key: step, reached, completed, abandoned: Math.max(reached - completed, 0), conversion: reached > 0 ? completed / reached : null };
   });
 }
