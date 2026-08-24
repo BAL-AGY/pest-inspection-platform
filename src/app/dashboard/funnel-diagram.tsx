@@ -78,7 +78,7 @@ export default function FunnelDiagram({ stages, stageLeads, revenueCents }: Funn
         <Connector percent={null} label="revenue" />
         <div className="flex min-w-0 flex-1 flex-col gap-1 rounded-xl border border-amber-300/30 bg-gradient-to-br from-amber-400/15 to-amber-600/5 px-3 py-3 sm:px-4 sm:py-4">
           <span className="text-[10px] font-semibold uppercase leading-tight tracking-wide text-amber-200/80">Revenue</span>
-          <span className="truncate text-xl font-bold tabular-nums text-amber-100 sm:text-2xl" title={money(revenueCents) ?? undefined}>
+          <span className="truncate text-base font-bold tabular-nums text-amber-100" title={money(revenueCents) ?? undefined}>
             {money(revenueCents) ?? "—"}
           </span>
           <span className="mt-0.5 text-[10px] leading-tight text-amber-200/60">From won customers</span>
