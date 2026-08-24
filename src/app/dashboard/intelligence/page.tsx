@@ -250,18 +250,24 @@ export default async function AcquisitionIntelligencePage() {
       {/* ------------------------------------------------------------- */}
       {comparisons.length > 0 && (
         <section>
-          <h2 className="mb-1 text-sm font-semibold uppercase tracking-wide text-zinc-500">First-party vs industry</h2>
-          <p className="mb-3 text-xs text-zinc-400">Only shown once an experiment has real, comparable data.</p>
+          <h2 className="mb-1 text-sm font-semibold uppercase tracking-wide text-zinc-500">Your performance vs. pest control industry evidence</h2>
+          <p className="mb-3 text-xs text-zinc-400">Only shown once an experiment has real, comparable data. These two numbers are never blended into one.</p>
           <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
             {comparisons.map(({ experiment, recommendation }) => (
               <div key={experiment.id} className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
-                <div className="mb-2 flex items-start justify-between gap-2">
+                <div className="mb-3 flex items-start justify-between gap-2">
                   <p className="font-semibold text-zinc-900">{experiment.hypothesis}</p>
                   <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase ${ACTION_STYLES[recommendation.action]}`}>{ACTION_LABELS[recommendation.action]}</span>
                 </div>
                 <div className="grid grid-cols-2 gap-3 text-sm">
-                  <Metric label="Industry benchmark" value={money(recommendation.benchmarkMedian)} />
-                  <Metric label="Your result" value={money(recommendation.experimentValue)} />
+                  <div className="rounded-lg border border-violet-200 bg-violet-50 p-2.5">
+                    <p className="text-[10px] font-bold uppercase tracking-wide text-violet-700">Industry evidence</p>
+                    <p className="mt-0.5 text-base font-bold text-violet-950">{money(recommendation.benchmarkMedian)}</p>
+                  </div>
+                  <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-2.5">
+                    <p className="text-[10px] font-bold uppercase tracking-wide text-emerald-700">Your performance</p>
+                    <p className="mt-0.5 text-base font-bold text-emerald-950">{money(recommendation.experimentValue)}</p>
+                  </div>
                 </div>
                 <p className="mt-2 text-xs text-zinc-500">{recommendation.reason}</p>
               </div>

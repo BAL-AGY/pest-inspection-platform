@@ -26,7 +26,7 @@ async function loginAsOwner(page: import("@playwright/test").Page) {
 
 test("Acquisition Intelligence nav link, empty states, and category separation render correctly", async ({ page }) => {
   await loginAsOwner(page);
-  await page.getByRole("link", { name: "Intelligence" }).click();
+  await page.getByRole("link", { name: "Intelligence", exact: true }).click();
   await expect(page).toHaveURL(/\/dashboard\/intelligence/);
 
   await expect(page.getByRole("heading", { name: "Acquisition Intelligence" })).toBeVisible();

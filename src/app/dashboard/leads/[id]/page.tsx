@@ -15,6 +15,7 @@ import { formatInCompanyTime } from "@/lib/timezone";
 import { QUALIFICATION_QUESTIONS, parseStoredQualificationAnswers } from "@/lib/qualification";
 import { attributionFromLead, clearRevenueEvent, recordCustomerOutcomeEvent, recordRevenueEvent } from "@/lib/analytics-events";
 import { formatPotentialValueRange, isServiceArrangement, parsePestCategories, parseServiceArrangements, pestCategoryForConcern, serviceArrangementLabel } from "@/lib/service-catalog";
+import { Badge, Card, SectionHeader } from "../../ui";
 
 const EVENT_LABELS: Record<string, string> = {
   lead_created: "Lead created",
@@ -28,6 +29,17 @@ const EVENT_LABELS: Record<string, string> = {
   customer_lost: "Customer lost",
 };
 
+const STATUS_BADGE_TONE: Record<LeadStatus, "neutral" | "emerald" | "amber" | "sky" | "violet" | "rose"> = {
+  new: "neutral",
+  engaged: "sky",
+  mql: "amber",
+  sql: "violet",
+  inspection_booked: "emerald",
+  inspection_completed: "emerald",
+  customer_won: "emerald",
+  customer_lost: "rose",
+};
+
 function answerLabel(questionId: string, value: unknown): string {
   const question = QUALIFICATION_QUESTIONS.find((candidate) => candidate.id === questionId);
   if (typeof value === "boolean") return value ? "Yes" : "No";
@@ -38,6 +50,15 @@ function answerLabel(questionId: string, value: unknown): string {
   }
   if (typeof value !== "string") return "—";
   return labelFor(value);
+}
+
+function Field({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-w-0">
+      <p className="truncate text-xs text-zinc-500">{label}</p>
+      <p className="truncate text-sm font-semibold text-zinc-900">{value}</p>
+    </div>
+  );
 }
 
 export default async function LeadDetailPage({
@@ -68,6 +89,7 @@ export default async function LeadDetailPage({
   const potentialValueRange = acquisitionCategory ? formatPotentialValueRange(acquisitionCategory) : null;
 
   const answers = parseStoredQualificationAnswers(lead.qualificationAnswers);
+  const nextAppointment = lead.appointments.find((a) => a.status === "booked" || a.status === "rescheduled") ?? lead.appointments[0] ?? null;
 
   async function addNote(formData: FormData) {
     "use server";
@@ -192,220 +214,189 @@ export default async function LeadDetailPage({
     revalidatePath(`/dashboard/leads/${id}`);
   }
 
+  const displayName = lead.firstName || lead.lastName ? `${lead.firstName ?? ""} ${lead.lastName ?? ""}`.trim() : "Unnamed lead";
+
   return (
-    <div className="flex flex-col gap-6 max-w-3xl">
-      <div>
-        <h1 className="text-2xl font-bold">
-          {lead.firstName || lead.lastName
-            ? `${lead.firstName ?? ""} ${lead.lastName ?? ""}`.trim()
-            : "Unnamed lead"}
-        </h1>
-        <p className="text-zinc-500 text-sm mt-1">
-          {lead.email ?? "no email"} · {lead.phone ?? "no phone"}
-        </p>
+    <div className="flex flex-col gap-6">
+      {/* TOP — homeowner identity, stage, qualification, appointment, source at a glance */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
+          <h1 className="truncate text-2xl font-bold tracking-tight text-zinc-900">{displayName}</h1>
+          <p className="mt-1 truncate text-sm text-zinc-500">{lead.email ?? "no email"} · {lead.phone ?? "no phone"}</p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Badge tone={STATUS_BADGE_TONE[lead.status as LeadStatus] ?? "neutral"}>{LEAD_STATUS_LABELS[lead.status as LeadStatus] ?? lead.status}</Badge>
+          <Badge tone="neutral">Score {lead.score}</Badge>
+          {nextAppointment && <Badge tone="emerald">{formatInCompanyTime(nextAppointment.scheduledStart, timeZone, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</Badge>}
+        </div>
       </div>
 
-      <section aria-label="Lead summary" className="bg-white border border-zinc-200 rounded-lg p-4 grid grid-cols-2 sm:grid-cols-3 gap-4 text-sm">
-        <div>
-          <p className="text-zinc-500">Score</p>
-          <p className="font-semibold">{lead.score}</p>
-        </div>
-        <div>
-          <p className="text-zinc-500">Classification</p>
-          <p className="font-semibold uppercase">{lead.classification}</p>
-        </div>
-        <div>
-          <p className="text-zinc-500">Status</p>
-          <p className="font-semibold">{LEAD_STATUS_LABELS[lead.status as LeadStatus] ?? lead.status}</p>
-        </div>
-        <div>
-          <p className="text-zinc-500">ZIP</p>
-          <p className="font-semibold">{lead.zipCode ?? "—"}</p>
-        </div>
-        <div>
-          <p className="text-zinc-500">Pest concern</p>
-          <p className="font-semibold">{answerLabel("pestType", lead.pestConcern)}</p>
-        </div>
-        <div>
-          <p className="text-zinc-500">Pest category</p>
-          <p className="font-semibold">{acquisitionCategory?.label ?? "—"}</p>
-        </div>
-        <div>
-          <p className="text-zinc-500">Urgency</p>
-          <p className="font-semibold">{answerLabel("timeline", answers.timeline)}</p>
-        </div>
-        <div>
-          <p className="text-zinc-500">Homeowner</p>
-          <p className="font-semibold">{lead.isHomeowner === null ? "—" : lead.isHomeowner ? "Yes" : "No"}</p>
-        </div>
-        <div>
-          <p className="text-zinc-500">Current pest provider</p>
-          <p className="font-semibold">{lead.hasExistingProvider === null ? "—" : lead.hasExistingProvider ? "Yes" : "No"}</p>
-        </div>
-        {lead.hasExistingProvider && <div><p className="text-zinc-500">Switcher reason</p><p className="font-semibold">{answerLabel("switchReason", lead.switchReason)}</p></div>}
+      <section aria-label="Lead summary">
+        <Card className="grid grid-cols-2 gap-4 p-4 sm:grid-cols-3">
+          <div><p className="text-zinc-500 text-sm">Score</p><p className="font-semibold">{lead.score}</p></div>
+          <div><p className="text-zinc-500 text-sm">Classification</p><p className="font-semibold uppercase">{lead.classification}</p></div>
+          <div><p className="text-zinc-500 text-sm">Status</p><p className="font-semibold">{LEAD_STATUS_LABELS[lead.status as LeadStatus] ?? lead.status}</p></div>
+          <div><p className="text-zinc-500 text-sm">ZIP</p><p className="font-semibold">{lead.zipCode ?? "—"}</p></div>
+          <div><p className="text-zinc-500 text-sm">Pest concern</p><p className="font-semibold">{answerLabel("pestType", lead.pestConcern)}</p></div>
+          <div><p className="text-zinc-500 text-sm">Pest category</p><p className="font-semibold">{acquisitionCategory?.label ?? "—"}</p></div>
+          <div><p className="text-zinc-500 text-sm">Urgency</p><p className="font-semibold">{answerLabel("timeline", answers.timeline)}</p></div>
+          <div><p className="text-zinc-500 text-sm">Homeowner</p><p className="font-semibold">{lead.isHomeowner === null ? "—" : lead.isHomeowner ? "Yes" : "No"}</p></div>
+          <div><p className="text-zinc-500 text-sm">Current pest provider</p><p className="font-semibold">{lead.hasExistingProvider === null ? "—" : lead.hasExistingProvider ? "Yes" : "No"}</p></div>
+          {lead.hasExistingProvider && <div><p className="text-zinc-500 text-sm">Switcher reason</p><p className="font-semibold">{answerLabel("switchReason", lead.switchReason)}</p></div>}
+        </Card>
       </section>
 
-      {potentialValueRange && (
-        <section className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm">
-          <h2 className="font-semibold text-amber-900">Potential Value Range</h2>
-          <p className="mt-1 text-lg font-bold text-amber-950">{potentialValueRange}</p>
-          <p className="mt-1 text-xs text-amber-800">Internal acquisition context only. Every property requires an inspection; this is not a homeowner quote and is never counted as revenue.</p>
-        </section>
-      )}
-
-      <section>
-        <h2 className="text-sm font-semibold text-zinc-500 uppercase mb-2">Attribution</h2>
-        <div className="bg-white border border-zinc-200 rounded-lg p-4 grid grid-cols-2 sm:grid-cols-3 gap-4 text-sm">
-          <div><p className="text-zinc-500">First-touch source</p><p className="font-semibold">{lead.source ?? "direct"}</p></div>
-          <div><p className="text-zinc-500">First-touch medium</p><p className="font-semibold">{lead.medium ?? "—"}</p></div>
-          <div><p className="text-zinc-500">First-touch campaign</p><p className="font-semibold">{lead.campaign ?? "—"}</p></div>
-          <div><p className="text-zinc-500">Last-touch source</p><p className="font-semibold">{lead.lastSource ?? lead.source ?? "direct"}</p></div>
-          <div><p className="text-zinc-500">Last-touch medium</p><p className="font-semibold">{lead.lastMedium ?? lead.medium ?? "—"}</p></div>
-          <div><p className="text-zinc-500">Last-touch campaign</p><p className="font-semibold">{lead.lastCampaign ?? lead.campaign ?? "—"}</p></div>
-          <div className="col-span-2 sm:col-span-3"><p className="text-zinc-500">First landing page</p><p className="font-semibold break-all">{lead.landingPage ?? "—"}</p></div>
-        </div>
-      </section>
-
-      <section>
-        <h2 className="text-sm font-semibold text-zinc-500 uppercase mb-2">Qualification answers</h2>
-        <div className="bg-white border border-zinc-200 rounded-lg p-4 text-sm grid grid-cols-2 gap-2">
-          {QUALIFICATION_QUESTIONS.filter((question) => question.id in answers).map((question) => (
-            <div key={question.id}>
-              <span className="text-zinc-500">{question.prompt} </span>
-              <span className="font-medium">{answerLabel(question.id, answers[question.id])}</span>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      <section>
-        <h2 className="text-sm font-semibold text-zinc-500 uppercase mb-2">Appointments</h2>
-        <div className="flex flex-col gap-2">
-          {lead.appointments.length === 0 && (
-            <p className="text-sm text-zinc-400">No appointments booked.</p>
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+        {/* LEFT — pest situation + qualification answers */}
+        <div className="flex flex-col gap-6 lg:col-span-2">
+          {potentialValueRange && (
+            <Card className="border-amber-200 bg-amber-50 p-4">
+              <h2 className="font-semibold text-amber-900">Potential Value Range</h2>
+              <p className="mt-1 text-lg font-bold text-amber-950">{potentialValueRange}</p>
+              <p className="mt-1 text-xs text-amber-800">Internal acquisition context only. Every property requires an inspection; this is not a homeowner quote and is never counted as revenue.</p>
+            </Card>
           )}
-          {lead.appointments.map((a) => (
-            <div key={a.id} className="bg-white border border-zinc-200 rounded-lg p-3 text-sm flex items-center justify-between gap-4 flex-wrap">
-              <div>
-                <p className="font-medium">
-                  {formatInCompanyTime(a.scheduledStart, timeZone, {
-                    weekday: "short",
-                    month: "short",
-                    day: "numeric",
-                    hour: "numeric",
-                    minute: "2-digit",
-                    timeZoneName: "short",
-                  })}
-                </p>
-                <p className="text-zinc-500 text-xs">{APPOINTMENT_STATUS_LABELS[a.status as AppointmentStatus] ?? a.status}</p>
-              </div>
-              {a.status === "booked" && (
+
+          <section>
+            <SectionHeader title="Qualification answers" />
+            <Card className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-2">
+              {QUALIFICATION_QUESTIONS.filter((question) => question.id in answers).map((question) => (
+                <Field key={question.id} label={question.prompt} value={answerLabel(question.id, answers[question.id])} />
+              ))}
+            </Card>
+          </section>
+
+          <section>
+            <SectionHeader title="Appointments" />
+            <div className="flex flex-col gap-2">
+              {lead.appointments.length === 0 && <p className="text-sm text-zinc-400">No appointments booked.</p>}
+              {lead.appointments.map((a) => (
+                <Card key={a.id} className="flex flex-wrap items-center justify-between gap-4 p-3">
+                  <div>
+                    <p className="font-medium">
+                      {formatInCompanyTime(a.scheduledStart, timeZone, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short" })}
+                    </p>
+                    <p className="text-zinc-500 text-xs">{APPOINTMENT_STATUS_LABELS[a.status as AppointmentStatus] ?? a.status}</p>
+                  </div>
+                  {a.status === "booked" && (
+                    <div className="flex gap-2">
+                      <form action={completeInspection}>
+                        <input type="hidden" name="appointmentId" value={a.id} />
+                        <button className="rounded-full bg-emerald-700 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-emerald-800">Mark completed</button>
+                      </form>
+                      <form action={markNoShow}>
+                        <input type="hidden" name="appointmentId" value={a.id} />
+                        <button className="rounded-full border border-zinc-300 px-3 py-1.5 text-xs font-medium transition-colors hover:border-zinc-400">No-show</button>
+                      </form>
+                      <form action={cancelAppointment}>
+                        <input type="hidden" name="appointmentId" value={a.id} />
+                        <button className="rounded-full border border-red-300 px-3 py-1.5 text-xs font-medium text-red-600 transition-colors hover:bg-red-50">Cancel</button>
+                      </form>
+                    </div>
+                  )}
+                </Card>
+              ))}
+            </div>
+          </section>
+
+          <section>
+            <SectionHeader title="Notes" />
+            <form action={addNote} className="mb-3 flex gap-2">
+              <input name="body" placeholder="Add a note…" className="min-w-0 flex-1 rounded-lg border border-zinc-300 px-3 py-2 text-sm focus:border-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-100" />
+              <button className="shrink-0 rounded-lg bg-zinc-900 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-zinc-800">Add</button>
+            </form>
+            <div className="flex flex-col gap-2">
+              {lead.notes.map((n) => (
+                <Card key={n.id} className="p-3">
+                  <p className="text-sm">{n.body}</p>
+                  <p className="mt-1 text-xs text-zinc-400">{n.authorId ?? "staff"} · {new Date(n.createdAt).toLocaleString()}</p>
+                </Card>
+              ))}
+            </div>
+          </section>
+        </div>
+
+        {/* RIGHT — attribution, outcome, pipeline status */}
+        <div className="flex flex-col gap-6">
+          <section>
+            <SectionHeader title="Attribution" />
+            <Card className="grid grid-cols-2 gap-3 p-4 text-sm">
+              <Field label="First-touch source" value={lead.source ?? "direct"} />
+              <Field label="First-touch medium" value={lead.medium ?? "—"} />
+              <Field label="First-touch campaign" value={lead.campaign ?? "—"} />
+              <Field label="Last-touch source" value={lead.lastSource ?? lead.source ?? "direct"} />
+              <Field label="Last-touch medium" value={lead.lastMedium ?? lead.medium ?? "—"} />
+              <Field label="Last-touch campaign" value={lead.lastCampaign ?? lead.campaign ?? "—"} />
+              <div className="col-span-2 min-w-0"><p className="text-zinc-500 text-sm">First landing page</p><p className="break-all text-sm font-semibold">{lead.landingPage ?? "—"}</p></div>
+            </Card>
+          </section>
+
+          <section>
+            <SectionHeader title="Outcome" />
+            <Card className="p-4">
+              <form action={setOutcome} className="flex flex-col gap-3">
+                <label className="text-xs text-zinc-500">Actual pest/service category
+                  <select name="actualPestCategory" defaultValue={lead.actualPestCategory ?? acquisitionCategory?.id ?? ""} className="mt-1 w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm">
+                    <option value="">Not recorded</option>
+                    {pestCategories.map((category) => <option key={category.id} value={category.id}>{category.label}</option>)}
+                  </select>
+                </label>
+                <label className="text-xs text-zinc-500">Service arrangement
+                  <select name="serviceArrangement" defaultValue={lead.serviceArrangement ?? ""} className="mt-1 w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm">
+                    <option value="">Not recorded</option>
+                    {serviceArrangements.map((arrangement) => <option key={arrangement} value={arrangement}>{serviceArrangementLabel(arrangement)}</option>)}
+                  </select>
+                </label>
+                <label className="text-xs text-zinc-500">Actual contract value ($)
+                  <input name="contractValue" type="number" step="0.01" className="mt-1 w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm" />
+                </label>
                 <div className="flex gap-2">
-                  <form action={completeInspection}>
-                    <input type="hidden" name="appointmentId" value={a.id} />
-                    <button className="text-xs rounded bg-emerald-700 text-white px-3 py-1.5">
-                      Mark completed
-                    </button>
-                  </form>
-                  <form action={markNoShow}>
-                    <input type="hidden" name="appointmentId" value={a.id} />
-                    <button className="text-xs rounded border border-zinc-300 px-3 py-1.5">
-                      No-show
-                    </button>
-                  </form>
-                  <form action={cancelAppointment}>
-                    <input type="hidden" name="appointmentId" value={a.id} />
-                    <button className="text-xs rounded border border-red-300 text-red-600 px-3 py-1.5">
-                      Cancel
-                    </button>
-                  </form>
+                  <button name="outcome" value="won" className="flex-1 rounded-lg bg-emerald-700 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-emerald-800">Mark Won</button>
+                  <button name="outcome" value="lost" className="flex-1 rounded-lg border border-zinc-300 px-4 py-2 text-sm font-medium transition-colors hover:border-zinc-400">Mark Lost</button>
                 </div>
+              </form>
+              {lead.outcome && (
+                <p className="mt-3 text-sm text-zinc-500">
+                  Current outcome: <strong>{lead.outcome}</strong>
+                  {lead.actualPestCategory ? ` · ${pestCategories.find((category) => category.id === lead.actualPestCategory)?.label ?? lead.actualPestCategory}` : ""}
+                  {lead.serviceArrangement ? ` · ${serviceArrangementLabel(lead.serviceArrangement)}` : ""}
+                  {lead.contractValueCents ? ` · $${(lead.contractValueCents / 100).toFixed(2)}` : ""}
+                </p>
               )}
-            </div>
-          ))}
+            </Card>
+          </section>
+
+          <section>
+            <SectionHeader title="Pipeline status" />
+            <Card className="p-4">
+              <form action={updateStatus} className="flex flex-col gap-2">
+                <select name="status" defaultValue={lead.status} className="rounded-lg border border-zinc-300 px-3 py-2 text-sm">
+                  {LEAD_STATUSES.map((s) => <option key={s} value={s}>{LEAD_STATUS_LABELS[s]}</option>)}
+                </select>
+                <button className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-zinc-800">Update</button>
+              </form>
+            </Card>
+          </section>
         </div>
-      </section>
+      </div>
 
+      {/* BOTTOM — activity timeline, using the actual stored lifecycle events */}
       <section>
-        <h2 className="text-sm font-semibold text-zinc-500 uppercase mb-2">Outcome</h2>
-        <form action={setOutcome} className="flex flex-wrap items-end gap-2 bg-white border border-zinc-200 rounded-lg p-4">
-          <div>
-            <label className="text-xs text-zinc-500 block mb-1">Actual pest/service category</label>
-            <select name="actualPestCategory" defaultValue={lead.actualPestCategory ?? acquisitionCategory?.id ?? ""} className="border border-zinc-300 rounded px-3 py-2 text-sm">
-              <option value="">Not recorded</option>
-              {pestCategories.map((category) => <option key={category.id} value={category.id}>{category.label}</option>)}
-            </select>
-          </div>
-          <div>
-            <label className="text-xs text-zinc-500 block mb-1">Service arrangement</label>
-            <select name="serviceArrangement" defaultValue={lead.serviceArrangement ?? ""} className="border border-zinc-300 rounded px-3 py-2 text-sm">
-              <option value="">Not recorded</option>
-              {serviceArrangements.map((arrangement) => <option key={arrangement} value={arrangement}>{serviceArrangementLabel(arrangement)}</option>)}
-            </select>
-          </div>
-          <div>
-            <label className="text-xs text-zinc-500 block mb-1">Actual contract value ($)</label>
-            <input name="contractValue" type="number" step="0.01" className="border border-zinc-300 rounded px-3 py-2 text-sm w-32" />
-          </div>
-          <button name="outcome" value="won" className="text-sm rounded bg-emerald-700 text-white px-4 py-2">
-            Mark Won
-          </button>
-          <button name="outcome" value="lost" className="text-sm rounded border border-zinc-300 px-4 py-2">
-            Mark Lost
-          </button>
-        </form>
-        {lead.outcome && (
-          <p className="text-sm text-zinc-500 mt-2">
-            Current outcome: <strong>{lead.outcome}</strong>
-            {lead.actualPestCategory ? ` · ${pestCategories.find((category) => category.id === lead.actualPestCategory)?.label ?? lead.actualPestCategory}` : ""}
-            {lead.serviceArrangement ? ` · ${serviceArrangementLabel(lead.serviceArrangement)}` : ""}
-            {lead.contractValueCents ? ` · $${(lead.contractValueCents / 100).toFixed(2)}` : ""}
-          </p>
-        )}
-      </section>
-
-      <section>
-        <h2 className="text-sm font-semibold text-zinc-500 uppercase mb-2">Pipeline status</h2>
-        <form action={updateStatus} className="flex gap-2 flex-wrap">
-          <select name="status" defaultValue={lead.status} className="border border-zinc-300 rounded px-3 py-2 text-sm">
-            {LEAD_STATUSES.map((s) => (
-              <option key={s} value={s}>
-                {LEAD_STATUS_LABELS[s]}
-              </option>
+        <SectionHeader title="Timeline" />
+        <Card className="p-4">
+          <div className="flex flex-col">
+            {lead.funnelEvents.map((e, i) => (
+              <div key={e.id} className="relative flex gap-3 pb-4 last:pb-0">
+                {i < lead.funnelEvents.length - 1 && <span className="absolute left-[5px] top-3 h-full w-px bg-zinc-200" aria-hidden />}
+                <span className="relative mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full bg-emerald-600 ring-4 ring-emerald-100" aria-hidden />
+                <div className="flex min-w-0 flex-1 flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5">
+                  <span className="text-sm text-zinc-700">{EVENT_LABELS[e.eventType] ?? e.eventType.replaceAll("_", " ")}</span>
+                  <span className="text-xs text-zinc-400">{formatInCompanyTime(e.createdAt, timeZone, { dateStyle: "medium", timeStyle: "short" })}</span>
+                </div>
+              </div>
             ))}
-          </select>
-          <button className="text-sm rounded bg-zinc-800 text-white px-4 py-2">Update</button>
-        </form>
-      </section>
-
-      <section>
-        <h2 className="text-sm font-semibold text-zinc-500 uppercase mb-2">Notes</h2>
-        <form action={addNote} className="flex gap-2 mb-3">
-          <input name="body" placeholder="Add a note…" className="min-w-0 flex-1 border border-zinc-300 rounded px-3 py-2 text-sm" />
-          <button className="text-sm rounded bg-zinc-800 text-white px-4 py-2">Add</button>
-        </form>
-        <div className="flex flex-col gap-2">
-          {lead.notes.map((n) => (
-            <div key={n.id} className="bg-white border border-zinc-200 rounded-lg p-3 text-sm">
-              <p>{n.body}</p>
-              <p className="text-xs text-zinc-400 mt-1">
-                {n.authorId ?? "staff"} · {new Date(n.createdAt).toLocaleString()}
-              </p>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      <section>
-        <h2 className="text-sm font-semibold text-zinc-500 uppercase mb-2">Timeline</h2>
-        <div className="flex flex-col gap-1 text-sm text-zinc-600">
-          {lead.funnelEvents.map((e) => (
-            <div key={e.id} className="flex justify-between">
-              <span>{EVENT_LABELS[e.eventType] ?? e.eventType.replaceAll("_", " ")}</span>
-              <span className="text-zinc-400">{formatInCompanyTime(e.createdAt, timeZone, { dateStyle: "medium", timeStyle: "short" })}</span>
-            </div>
-          ))}
-        </div>
+          </div>
+        </Card>
       </section>
     </div>
   );
