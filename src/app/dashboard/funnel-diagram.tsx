@@ -56,7 +56,7 @@ export default function FunnelDiagram({ stages, stageLeads, revenueCents }: Funn
                 disabled={!clickable}
                 onClick={() => setOpenStage(isOpen ? null : stage.key)}
                 aria-expanded={isOpen}
-                className={`group relative flex min-w-0 flex-1 flex-col gap-1 rounded-xl border px-4 py-4 text-left transition-all duration-200 ${
+                className={`group relative flex min-w-0 flex-1 flex-col gap-1 rounded-xl border px-3 py-3 text-left transition-all duration-200 sm:px-4 sm:py-4 ${
                   isOpen
                     ? "border-emerald-300 bg-white/15 shadow-[0_0_0_1px_rgba(110,231,183,0.5)]"
                     : clickable
@@ -64,8 +64,8 @@ export default function FunnelDiagram({ stages, stageLeads, revenueCents }: Funn
                       : "border-white/10 bg-white/[0.03]"
                 } ${clickable ? "cursor-pointer" : "cursor-default"}`}
               >
-                <span className="truncate text-[10px] font-semibold uppercase tracking-wide text-emerald-200/70">{stage.label}</span>
-                <span className="text-3xl font-bold tabular-nums text-white">{stage.count}</span>
+                <span className="text-[10px] font-semibold uppercase leading-tight tracking-wide text-emerald-200/70">{stage.label}</span>
+                <span className="text-2xl font-bold tabular-nums text-white sm:text-3xl">{stage.count}</span>
                 {clickable && (
                   <span className="mt-0.5 text-[10px] font-medium text-emerald-300/90">
                     {isOpen ? "Hide records ▲" : "View records ›"}
@@ -76,10 +76,12 @@ export default function FunnelDiagram({ stages, stageLeads, revenueCents }: Funn
           );
         })}
         <Connector percent={null} label="revenue" />
-        <div className="flex min-w-0 flex-1 flex-col gap-1 rounded-xl border border-amber-300/30 bg-gradient-to-br from-amber-400/15 to-amber-600/5 px-4 py-4">
-          <span className="truncate text-[10px] font-semibold uppercase tracking-wide text-amber-200/80">Revenue</span>
-          <span className="text-3xl font-bold tabular-nums text-amber-100">{money(revenueCents) ?? "—"}</span>
-          <span className="mt-0.5 text-[10px] text-amber-200/60">From won customers</span>
+        <div className="flex min-w-0 flex-1 flex-col gap-1 rounded-xl border border-amber-300/30 bg-gradient-to-br from-amber-400/15 to-amber-600/5 px-3 py-3 sm:px-4 sm:py-4">
+          <span className="text-[10px] font-semibold uppercase leading-tight tracking-wide text-amber-200/80">Revenue</span>
+          <span className="truncate text-xl font-bold tabular-nums text-amber-100 sm:text-2xl" title={money(revenueCents) ?? undefined}>
+            {money(revenueCents) ?? "—"}
+          </span>
+          <span className="mt-0.5 text-[10px] leading-tight text-amber-200/60">From won customers</span>
         </div>
       </div>
 
