@@ -10,6 +10,7 @@ import {
 } from "@/lib/company";
 import { classifyLead, computeLeadScore, type QualificationAnswers } from "@/lib/scoring";
 import {
+  answersEqual,
   deriveQualificationState,
   parseStoredQualificationAnswers,
   validateQualificationSubmission,
@@ -402,7 +403,7 @@ async function saveLead(req: NextRequest) {
       eventType: "lead_created", eventKey: `lead:${lead.id}:created`, isDemo: company.isDemo, attribution: eventAttribution });
   }
   for (const [questionId, value] of Object.entries(validated.answers)) {
-    if (priorAnswers[questionId] !== value) {
+    if (!answersEqual(priorAnswers[questionId], value)) {
       await recordFunnelEvent({ companyId: company.id, leadId: lead.id, visitorId: authoritativeVisitorId,
         eventType: "qualification_question_answered", eventKey: answerEventKey(lead.id, questionId, value),
         funnelStep: questionId, isDemo: company.isDemo, attribution: eventAttribution,

@@ -141,3 +141,85 @@ export async function getDashboardMetrics(companyId: string, options: { preset?:
   };
 }
 export type DashboardMetrics = Awaited<ReturnType<typeof getDashboardMetrics>>;
+
+const STAGE_LEAD_SELECT = {
+  id: true,
+  firstName: true,
+  lastName: true,
+  pestConcern: true,
+  zipCode: true,
+  source: true,
+  campaign: true,
+  status: true,
+  createdAt: true,
+} as const;
+
+function summarizeStageLead(lead: {
+  id: string; firstName: string | null; lastName: string | null; pestConcern: string | null;
+  zipCode: string | null; source: string | null; campaign: string | null; status: string; createdAt: Date;
+}) {
+  return {
+    id: lead.id,
+    name: [lead.firstName, lead.lastName].filter(Boolean).join(" ") || "Unnamed lead",
+    pestConcern: lead.pestConcern,
+    zipCode: lead.zipCode,
+    source: lead.source,
+    campaign: lead.campaign,
+    status: lead.status,
+    createdAt: lead.createdAt,
+  };
+}
+
+/**
+ * Real, currently-stored Lead/Appointment rows behind each clickable
+ * funnel-diagram stage (Command Center drilldown) — never fabricated
+ * "live" data. Scoped to the same date range and demo/tenant mode as
+ * getDashboardMetrics so the drilldown always matches the counts shown
+ * above it. Capped at 10 per stage: this is a quick-glance panel that
+ * links into the existing Lead Detail page, not a second CRM list view.
+ */
+export async function getFunnelStageLeads(companyId: string, options: { preset?: string; start?: string; end?: string; now?: Date } = {}) {
+  const company = await prisma.company.findUnique({ where: { id: companyId }, select: { timezone: true, isDemo: true } });
+  if (!company) throw new Error("Company not found.");
+  const now = options.now ?? new Date();
+  const timeZone = parseCompanyTimeZone(company);
+  const range = resolveAnalyticsRange(options, timeZone, now);
+  const mode = { companyId, isDemo: company.isDemo };
+  const dateScope = { createdAt: { gte: range.start, lt: range.end } };
+
+  const [qualified, booked, completed, won] = await Promise.all([
+    prisma.lead.findMany({
+      where: { ...mode, ...dateScope, classification: { in: ["mql", "sql"] } },
+      orderBy: [{ score: "desc" }, { createdAt: "desc" }],
+      take: 10,
+      select: STAGE_LEAD_SELECT,
+    }),
+    prisma.lead.findMany({
+      where: { ...mode, ...dateScope, status: "inspection_booked" },
+      orderBy: { createdAt: "desc" },
+      take: 10,
+      select: { ...STAGE_LEAD_SELECT, appointments: { orderBy: { scheduledStart: "asc" }, take: 1, select: { scheduledStart: true, status: true } } },
+    }),
+    prisma.lead.findMany({
+      where: { ...mode, ...dateScope, status: { in: ["inspection_completed", "customer_won", "customer_lost"] } },
+      orderBy: { updatedAt: "desc" },
+      take: 10,
+      select: STAGE_LEAD_SELECT,
+    }),
+    prisma.lead.findMany({
+      where: { ...mode, ...dateScope, status: "customer_won" },
+      orderBy: { updatedAt: "desc" },
+      take: 10,
+      select: { ...STAGE_LEAD_SELECT, contractValueCents: true, serviceArrangement: true },
+    }),
+  ]);
+
+  return {
+    range,
+    qualified: qualified.map(summarizeStageLead),
+    booked: booked.map((lead) => ({ ...summarizeStageLead(lead), appointment: lead.appointments[0] ?? null })),
+    completed: completed.map(summarizeStageLead),
+    won: won.map((lead) => ({ ...summarizeStageLead(lead), contractValueCents: lead.contractValueCents, serviceArrangement: lead.serviceArrangement })),
+  };
+}
+export type FunnelStageLeads = Awaited<ReturnType<typeof getFunnelStageLeads>>;

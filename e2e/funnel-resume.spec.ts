@@ -37,6 +37,11 @@ test("refreshing after completing qualification resumes at the contact form, not
   await expect(page.getByRole("heading", { name: /what pest issue/i })).toBeVisible();
   await page.getByRole("button", { name: "Rodents", exact: true }).click();
 
+  await expect(page.getByRole("heading", { name: /what are you seeing/i })).toBeVisible();
+  await page.getByRole("button", { name: "Live pests", exact: true }).click();
+  await page.getByRole("button", { name: "Droppings", exact: true }).click();
+  await page.getByRole("button", { name: "Continue", exact: true }).click();
+
   await expect(page.getByRole("heading", { name: /how would you describe the problem/i })).toBeVisible();
   await page.getByRole("button", { name: "It's a serious infestation", exact: true }).click();
 
@@ -52,4 +57,34 @@ test("refreshing after completing qualification resumes at the contact form, not
 
   await expect(page.getByPlaceholder("Email")).toBeVisible();
   await expect(page.getByPlaceholder("ZIP code")).toHaveCount(0);
+});
+
+test("multi-select symptoms persist through Back navigation and refresh", async ({ page }) => {
+  await page.goto("/inspection");
+  await page.getByPlaceholder("ZIP code").fill("73301");
+  await page.getByRole("button", { name: "Next", exact: true }).click();
+  await page.getByRole("button", { name: "Yes" }).click();
+  await page.getByRole("button", { name: "Rodents", exact: true }).click();
+
+  await expect(page.getByRole("heading", { name: /what are you seeing/i })).toBeVisible();
+  await page.getByRole("button", { name: "Live pests", exact: true }).click();
+  await page.getByRole("button", { name: "Droppings", exact: true }).click();
+  await page.getByRole("button", { name: "Continue", exact: true }).click();
+  await expect(page.getByRole("heading", { name: /how would you describe the problem/i })).toBeVisible();
+
+  // Back returns to the symptoms question with both prior selections still
+  // shown as checked, and the unselected options still unchecked.
+  await page.getByRole("button", { name: "Back", exact: true }).click();
+  await expect(page.getByRole("heading", { name: /what are you seeing/i })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Live pests", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByRole("button", { name: "Droppings", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByRole("button", { name: "Nests / webs", exact: true })).toHaveAttribute("aria-pressed", "false");
+
+  // Resuming through a refresh after re-confirming lands past the
+  // question, not back at its start.
+  await page.getByRole("button", { name: "Continue", exact: true }).click();
+  await expect(page.getByRole("heading", { name: /how would you describe the problem/i })).toBeVisible();
+  await page.reload();
+  await expect(page.getByRole("heading", { name: /how would you describe the problem/i })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /what are you seeing/i })).toHaveCount(0);
 });

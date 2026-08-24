@@ -23,6 +23,7 @@ test("a qualified lead who hasn't booked appears in the owner's follow-up workli
     { zipCode: "73301" },
     { isHomeowner: true },
     { pestType: "rodents" },
+    { symptoms: ["live_pests"] },
     { pestSeverity: "severe" },
     { hasExistingProvider: false },
     { timeline: "asap" },

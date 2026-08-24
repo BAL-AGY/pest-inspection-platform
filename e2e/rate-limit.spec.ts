@@ -14,6 +14,7 @@ async function createSqlLead(request: APIRequestContext, visitorId: string) {
     { zipCode: "73301" },
     { isHomeowner: true },
     { pestType: "termites" },
+    { symptoms: ["live_pests"] },
     { pestSeverity: "severe" },
     { hasExistingProvider: false },
     { timeline: "asap" },

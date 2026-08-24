@@ -156,7 +156,24 @@ export default function InspectionFunnelPage() {
     };
   }, []);
 
-  const question = useMemo(() => getNextQuestion(answers), [answers]);
+  // How many already-answered questions back the homeowner has navigated
+  // from the current frontier (0 = viewing the next unanswered question).
+  const [backSteps, setBackSteps] = useState(0);
+  const forwardQuestion = useMemo(() => getNextQuestion(answers), [answers]);
+  const answeredInOrder = useMemo(() => {
+    const visible = QUALIFICATION_QUESTIONS.filter((q) => !q.showIf || q.showIf(answers));
+    return visible.filter((q) => q.id in answers);
+  }, [answers]);
+  const backIndex = answeredInOrder.length - backSteps;
+  const question =
+    backSteps > 0 && backIndex >= 0 && backIndex < answeredInOrder.length
+      ? answeredInOrder[backIndex]
+      : forwardQuestion;
+  const canGoBack = backSteps < answeredInOrder.length;
+
+  function goBack() {
+    if (canGoBack) setBackSteps((n) => n + 1);
+  }
 
   async function saveAnswers(next: QualificationAnswers, justAnsweredQuestionId?: string) {
     setFunnelError(null);
@@ -235,8 +252,9 @@ export default function InspectionFunnelPage() {
     }
   }
 
-  function answer(id: string, value: string | boolean) {
+  function answer(id: string, value: string | boolean | string[]) {
     const next = { ...answers, [id]: value };
+    setBackSteps((n) => Math.max(0, n - 1));
     void saveAnswers(next, id);
   }
 
@@ -367,22 +385,37 @@ export default function InspectionFunnelPage() {
       (Object.keys(answers).length / totalVisibleQuestions) * 100,
     ),
   );
+  const viewingIndex =
+    backSteps > 0 ? backIndex + 1 : Math.min(Object.keys(answers).length + 1, totalVisibleQuestions);
 
   return (
     <main className="flex-1 flex flex-col bg-white text-zinc-900">
       <div className="h-1.5 bg-zinc-100">
         <div
-          className="h-full bg-emerald-700 transition-all"
+          className="h-full bg-emerald-700 transition-all duration-300 ease-out"
           style={{ width: stage === "questions" ? `${progress}%` : "100%" }}
         />
       </div>
 
       <div className="flex-1 flex flex-col justify-center px-6 py-12 max-w-xl mx-auto w-full gap-6">
         {stage === "questions" && (
-          <p className="text-xs font-medium text-zinc-400">
-            Question {Math.min(Object.keys(answers).length + 1, totalVisibleQuestions)} of{" "}
-            {totalVisibleQuestions}
-          </p>
+          <div className="flex items-center justify-between">
+            {canGoBack ? (
+              <button
+                type="button"
+                onClick={goBack}
+                disabled={submitting}
+                className="flex items-center gap-1 text-xs font-medium text-zinc-500 hover:text-emerald-700 disabled:opacity-50"
+              >
+                <span aria-hidden>←</span> Back
+              </button>
+            ) : (
+              <span />
+            )}
+            <p className="text-xs font-medium text-zinc-400">
+              Question {viewingIndex} of {totalVisibleQuestions}
+            </p>
+          </div>
         )}
         {funnelError && (
           <p role="alert" className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-red-700">
@@ -393,6 +426,7 @@ export default function InspectionFunnelPage() {
           <QuestionCard
             key={question.id}
             question={question}
+            currentAnswer={answers[question.id]}
             onAnswer={answer}
             disabled={submitting}
           />
@@ -567,20 +601,32 @@ export default function InspectionFunnelPage() {
 
 function QuestionCard({
   question,
+  currentAnswer,
   onAnswer,
   disabled,
 }: {
   question: (typeof QUALIFICATION_QUESTIONS)[number];
-  onAnswer: (id: string, value: string | boolean) => void;
+  currentAnswer: string | number | boolean | string[] | undefined;
+  onAnswer: (id: string, value: string | boolean | string[]) => void;
   disabled: boolean;
 }) {
-  const [zip, setZip] = useState("");
+  const [zip, setZip] = useState(typeof currentAnswer === "string" && question.type === "zip" ? currentAnswer : "");
+  const [selected, setSelected] = useState<string[]>(Array.isArray(currentAnswer) ? currentAnswer : []);
+
+  function toggleSymptom(value: string) {
+    setSelected((prev) =>
+      prev.includes(value) ? prev.filter((item) => item !== value) : [...prev, value],
+    );
+  }
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-4 animate-[fade-in_0.2s_ease-out]">
       <h2 className="text-2xl font-bold text-balance">{question.prompt}</h2>
       {question.id === "switchReason" && (
         <p className="text-sm text-zinc-500">{SWITCHER_DISCLAIMER}</p>
+      )}
+      {question.type === "multi_select" && (
+        <p className="text-sm text-zinc-500">Select all that apply.</p>
       )}
 
       {question.type === "zip" && (
@@ -597,14 +643,14 @@ function QuestionCard({
             maxLength={5}
             required
             placeholder="ZIP code"
-            className="min-w-0 flex-1 border border-zinc-300 rounded-md px-4 py-3 text-lg"
+            className="min-w-0 flex-1 border border-zinc-300 rounded-md px-4 py-3 text-lg focus:border-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-100"
             value={zip}
             onChange={(e) => setZip(e.target.value)}
             autoFocus
           />
           <button
             disabled={disabled}
-            className="rounded-md bg-emerald-700 px-6 py-3 font-semibold text-white disabled:opacity-50"
+            className="rounded-md bg-emerald-700 px-6 py-3 font-semibold text-white transition-colors hover:bg-emerald-800 disabled:opacity-50"
           >
             Next
           </button>
@@ -616,14 +662,22 @@ function QuestionCard({
           <button
             disabled={disabled}
             onClick={() => onAnswer(question.id, true)}
-            className="flex-1 rounded-md border border-zinc-300 px-6 py-4 text-lg font-medium hover:border-emerald-700 disabled:opacity-50"
+            className={`flex-1 rounded-md border px-6 py-4 text-lg font-medium transition-colors ${
+              currentAnswer === true
+                ? "border-emerald-700 bg-emerald-50 text-emerald-900"
+                : "border-zinc-300 hover:border-emerald-700"
+            } disabled:opacity-50`}
           >
             Yes
           </button>
           <button
             disabled={disabled}
             onClick={() => onAnswer(question.id, false)}
-            className="flex-1 rounded-md border border-zinc-300 px-6 py-4 text-lg font-medium hover:border-emerald-700 disabled:opacity-50"
+            className={`flex-1 rounded-md border px-6 py-4 text-lg font-medium transition-colors ${
+              currentAnswer === false
+                ? "border-emerald-700 bg-emerald-50 text-emerald-900"
+                : "border-zinc-300 hover:border-emerald-700"
+            } disabled:opacity-50`}
           >
             No
           </button>
@@ -637,11 +691,57 @@ function QuestionCard({
               key={opt.value}
               disabled={disabled}
               onClick={() => onAnswer(question.id, opt.value)}
-              className="rounded-md border border-zinc-300 px-4 py-3 text-left hover:border-emerald-700 disabled:opacity-50"
+              className={`rounded-md border px-4 py-3 text-left transition-colors ${
+                currentAnswer === opt.value
+                  ? "border-emerald-700 bg-emerald-50 font-medium text-emerald-900"
+                  : "border-zinc-300 hover:border-emerald-700"
+              } disabled:opacity-50`}
             >
               {opt.label}
             </button>
           ))}
+        </div>
+      )}
+
+      {question.type === "multi_select" && (
+        <div className="flex flex-col gap-4">
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            {question.options?.map((opt) => {
+              const isSelected = selected.includes(opt.value);
+              return (
+                <button
+                  key={opt.value}
+                  type="button"
+                  disabled={disabled}
+                  onClick={() => toggleSymptom(opt.value)}
+                  aria-pressed={isSelected}
+                  className={`flex items-center gap-3 rounded-md border px-4 py-3 text-left transition-colors ${
+                    isSelected
+                      ? "border-emerald-700 bg-emerald-50 font-medium text-emerald-900"
+                      : "border-zinc-300 hover:border-emerald-700"
+                  } disabled:opacity-50`}
+                >
+                  <span
+                    className={`flex h-5 w-5 shrink-0 items-center justify-center rounded border ${
+                      isSelected ? "border-emerald-700 bg-emerald-700 text-white" : "border-zinc-300"
+                    }`}
+                    aria-hidden
+                  >
+                    {isSelected ? "✓" : ""}
+                  </span>
+                  {opt.label}
+                </button>
+              );
+            })}
+          </div>
+          <button
+            type="button"
+            disabled={disabled || selected.length === 0}
+            onClick={() => onAnswer(question.id, selected)}
+            className="rounded-md bg-emerald-700 px-6 py-4 text-lg font-semibold text-white transition-colors hover:bg-emerald-800 disabled:opacity-50"
+          >
+            Continue
+          </button>
         </div>
       )}
     </div>

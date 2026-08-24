@@ -31,9 +31,13 @@ const EVENT_LABELS: Record<string, string> = {
 function answerLabel(questionId: string, value: unknown): string {
   const question = QUALIFICATION_QUESTIONS.find((candidate) => candidate.id === questionId);
   if (typeof value === "boolean") return value ? "Yes" : "No";
+  const options = [...(question?.options ?? []), ...(question?.acceptedOptions ?? [])];
+  const labelFor = (item: string) => options.find((option) => option.value === item)?.label ?? item;
+  if (Array.isArray(value)) {
+    return value.length > 0 ? value.map((item) => labelFor(String(item))).join(", ") : "—";
+  }
   if (typeof value !== "string") return "—";
-  return [...(question?.options ?? []), ...(question?.acceptedOptions ?? [])]
-    .find((option) => option.value === value)?.label ?? value;
+  return labelFor(value);
 }
 
 export default async function LeadDetailPage({

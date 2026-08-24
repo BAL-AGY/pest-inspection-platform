@@ -41,6 +41,7 @@ async function createSqlLead(
     { zipCode: "73301" },
     { isHomeowner: true },
     { pestType: "termites" },
+    { symptoms: ["live_pests"] },
     { pestSeverity: "severe" },
     { hasExistingProvider: false },
     { timeline: "asap" },

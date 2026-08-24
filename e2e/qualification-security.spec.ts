@@ -51,6 +51,7 @@ async function completeFunnel(
     { zipCode: options.zipCode ?? "73301" },
     { isHomeowner: !options.lowIntent },
     { pestType: options.pestType ?? (options.lowIntent ? "spiders" : "termites") },
+    { symptoms: ["live_pests"] },
     { pestSeverity: options.lowIntent ? "just_noticed" : "severe" },
     { hasExistingProvider: options.provider ?? false },
   ];
@@ -113,6 +114,7 @@ test.describe("server-authoritative qualification", () => {
       { zipCode: "73301" },
       { isHomeowner: true },
       { pestType: "termites" },
+      { symptoms: ["live_pests"] },
       { pestSeverity: "severe" },
       { hasExistingProvider: true },
     ]) {
@@ -135,6 +137,7 @@ test.describe("server-authoritative qualification", () => {
       { zipCode: "73301" },
       { isHomeowner: true },
       { pestType: "ants" },
+      { symptoms: ["live_pests"] },
       { pestSeverity: "ongoing" },
       { hasExistingProvider: false },
     ]) {
@@ -258,5 +261,33 @@ test.describe("server-authoritative qualification", () => {
     // start failing after repeated full-suite runs. Delete it now that
     // the assertions above are done with it.
     await prisma.lead.delete({ where: { id: session.leadId! } });
+  });
+
+  test("symptoms accepts multiple values end-to-end and rejects invalid shapes", async ({ request }) => {
+    const session = newSession("symptoms-multi");
+    await submit(request, session, { answers: { zipCode: "73301" } });
+    await submit(request, session, { answers: { isHomeowner: true } });
+    await submit(request, session, { answers: { pestType: "rodents" } });
+
+    const empty = await submit(request, session, { answers: { symptoms: [] } });
+    expect(empty.response.status()).toBe(400);
+    expect(empty.body.code).toBe("invalid_answer_type");
+
+    const badValue = await submit(request, session, { answers: { symptoms: ["live_pests", "not_a_symptom"] } });
+    expect(badValue.response.status()).toBe(400);
+    expect(badValue.body.code).toBe("invalid_answer_value");
+
+    const single = await submit(request, session, { answers: { symptoms: ["live_pests"] } });
+    expect(single.response.status()).toBe(200);
+    expect(single.body.lead.qualificationAnswers).toContain('"symptoms":["live_pests"]');
+
+    const multiple = await submit(request, session, { answers: { symptoms: ["live_pests", "droppings", "nests_webs"] } });
+    expect(multiple.response.status()).toBe(200);
+    expect(JSON.parse(multiple.body.lead.qualificationAnswers).symptoms).toEqual([
+      "live_pests",
+      "droppings",
+      "nests_webs",
+    ]);
+    expect(multiple.body.nextQuestion?.id).toBe("pestSeverity");
   });
 });

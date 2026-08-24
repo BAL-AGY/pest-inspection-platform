@@ -38,6 +38,10 @@ test("the public funnel never quotes a dollar amount or potential-value range to
   await page.getByRole("button", { name: "Rodents", exact: true }).click(); // highest, open-ended range
   await assertNoPricingLeak();
 
+  await page.getByRole("button", { name: "Live pests", exact: true }).click();
+  await page.getByRole("button", { name: "Continue", exact: true }).click();
+  await assertNoPricingLeak();
+
   await page.getByRole("button", { name: "It's a serious infestation", exact: true }).click();
   await assertNoPricingLeak();
 

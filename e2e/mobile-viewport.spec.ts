@@ -61,6 +61,14 @@ for (const width of WIDTHS) {
     expect(await hasHorizontalOverflow(page)).toBe(false);
 
     await page.getByRole("button", { name: "Rodents", exact: true }).click();
+    await expect(page.getByRole("heading", { name: /what are you seeing/i })).toBeVisible();
+    expect(await hasHorizontalOverflow(page)).toBe(false);
+    const symptomBox = await page.getByRole("button", { name: "Live pests", exact: true }).boundingBox();
+    expect(symptomBox!.height).toBeGreaterThanOrEqual(MIN_TOUCH_TARGET_PX);
+    await page.getByRole("button", { name: "Live pests", exact: true }).click();
+    const continueBox = await page.getByRole("button", { name: "Continue", exact: true }).boundingBox();
+    expect(continueBox!.height).toBeGreaterThanOrEqual(MIN_TOUCH_TARGET_PX);
+    await page.getByRole("button", { name: "Continue", exact: true }).click();
     await expect(page.getByRole("heading", { name: /how would you describe the problem/i })).toBeVisible();
     expect(await hasHorizontalOverflow(page)).toBe(false);
 
@@ -91,6 +99,8 @@ test("homeowner funnel: full booking journey (contact through confirmation) has 
   await page.getByRole("button", { name: "Next", exact: true }).click();
   await page.getByRole("button", { name: "Yes" }).click();
   await page.getByRole("button", { name: "Rodents", exact: true }).click();
+  await page.getByRole("button", { name: "Live pests", exact: true }).click();
+  await page.getByRole("button", { name: "Continue", exact: true }).click();
   await page.getByRole("button", { name: "It's a serious infestation", exact: true }).click();
   await page.getByRole("button", { name: "No" }).click();
   await page.getByRole("button", { name: "As soon as possible", exact: true }).click();
@@ -149,6 +159,14 @@ for (const width of WIDTHS) {
     await page.getByRole("button", { name: /sign in/i }).click();
     await expect(page).toHaveURL(/\/dashboard/);
 
+    // V2's Command Center hero (KPI strip) and the live acquisition funnel
+    // diagram sit above this section — confirm they render and don't
+    // themselves introduce overflow at this width before the existing
+    // check below.
+    await expect(page.getByRole("heading", { name: "Acquisition command center" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Live acquisition funnel" })).toBeVisible();
+    expect(await hasHorizontalOverflow(page)).toBe(false);
+
     await expect(page.getByRole("heading", { name: "Needs your attention today" })).toBeVisible();
     expect(await hasHorizontalOverflow(page)).toBe(false);
   });
@@ -163,6 +181,7 @@ test("the CRM lead-detail 'add a note' form has no overflow at 320px", async ({ 
     { zipCode: "73301" },
     { isHomeowner: true },
     { pestType: "rodents" },
+    { symptoms: ["live_pests"] },
     { pestSeverity: "severe" },
     { hasExistingProvider: false },
     { timeline: "asap" },

@@ -22,6 +22,7 @@ async function createLead(
     { zipCode: "73301" },
     { isHomeowner: true },
     { pestType: "ants" },
+    { symptoms: ["live_pests"] },
     { pestSeverity: "just_noticed" },
     { hasExistingProvider: false },
     { timeline: "just_researching" },

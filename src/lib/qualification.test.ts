@@ -12,11 +12,21 @@ describe("getNextQuestion", () => {
     expect(getNextQuestion({})?.id).toBe("zipCode");
   });
 
+  it("asks symptoms right after pestType", () => {
+    const answers = {
+      zipCode: "73301",
+      isHomeowner: true,
+      pestType: "ants",
+    };
+    expect(getNextQuestion(answers)?.id).toBe("symptoms");
+  });
+
   it("skips switchReason when hasExistingProvider is false", () => {
     const answers = {
       zipCode: "73301",
       isHomeowner: true,
       pestType: "ants",
+      symptoms: ["live_pests"],
       pestSeverity: "ongoing",
       hasExistingProvider: false,
     };
@@ -28,6 +38,7 @@ describe("getNextQuestion", () => {
       zipCode: "73301",
       isHomeowner: true,
       pestType: "ants",
+      symptoms: ["live_pests"],
       pestSeverity: "ongoing",
       hasExistingProvider: true,
     };
@@ -39,6 +50,7 @@ describe("getNextQuestion", () => {
       zipCode: "73301",
       isHomeowner: true,
       pestType: "ants",
+      symptoms: ["live_pests"],
       pestSeverity: "ongoing",
       hasExistingProvider: false,
       timeline: "asap",
@@ -94,6 +106,7 @@ describe("validateQualificationSubmission", () => {
       zipCode: "73301",
       isHomeowner: true,
       pestType: "ants",
+      symptoms: ["live_pests"],
       pestSeverity: "ongoing",
     };
     expect(
@@ -131,6 +144,7 @@ describe("deriveQualificationState", () => {
     zipCode: "73301",
     isHomeowner: true,
     pestType: "ants",
+    symptoms: ["live_pests"],
     pestSeverity: "ongoing",
     hasExistingProvider: false,
     timeline: "asap",
@@ -153,5 +167,88 @@ describe("deriveQualificationState", () => {
         hasContact: true,
       }),
     ).toMatchObject({ complete: true, supportedPest: false, eligibleForBooking: false });
+  });
+});
+
+describe("multi_select symptoms question", () => {
+  const priorThroughPestType = { zipCode: "73301", isHomeowner: true, pestType: "rodents" };
+
+  it("accepts a single selection", () => {
+    const result = validateQualificationSubmission({
+      priorAnswers: priorThroughPestType,
+      submittedAnswers: { symptoms: ["droppings"] },
+    });
+    expect(result).toMatchObject({ success: true, answers: { symptoms: ["droppings"] } });
+  });
+
+  it("accepts multiple selections", () => {
+    const result = validateQualificationSubmission({
+      priorAnswers: priorThroughPestType,
+      submittedAnswers: { symptoms: ["droppings", "noises", "nests_webs"] },
+    });
+    expect(result).toMatchObject({
+      success: true,
+      answers: { symptoms: ["droppings", "noises", "nests_webs"] },
+    });
+  });
+
+  it("rejects an empty selection", () => {
+    const result = validateQualificationSubmission({
+      priorAnswers: priorThroughPestType,
+      submittedAnswers: { symptoms: [] },
+    });
+    expect(result).toMatchObject({ success: false, issue: { code: "invalid_answer_type" } });
+  });
+
+  it("rejects a value outside the option set", () => {
+    const result = validateQualificationSubmission({
+      priorAnswers: priorThroughPestType,
+      submittedAnswers: { symptoms: ["droppings", "not_a_real_symptom"] },
+    });
+    expect(result).toMatchObject({ success: false, issue: { code: "invalid_answer_value" } });
+  });
+
+  it("rejects a plain string instead of an array (legacy single-select shape)", () => {
+    const result = validateQualificationSubmission({
+      priorAnswers: priorThroughPestType,
+      submittedAnswers: { symptoms: "droppings" },
+    });
+    expect(result).toMatchObject({ success: false, issue: { code: "invalid_answer_type" } });
+  });
+
+  it("advances to pestSeverity once symptoms is answered", () => {
+    const answers = { ...priorThroughPestType, symptoms: ["live_pests"] };
+    expect(getNextQuestion(answers)?.id).toBe("pestSeverity");
+  });
+
+  it("resubmitting the same selection alongside a later answer counts as only one new entry (Back/resume safe)", () => {
+    // Simulates the funnel client resending the full cumulative answers
+    // object (including the already-saved symptoms array) when answering
+    // the next question — the exact shape produced by Back navigation
+    // landing back on an already-answered step and resuming forward.
+    const priorAnswers = { ...priorThroughPestType, symptoms: ["live_pests", "droppings"] };
+    const result = validateQualificationSubmission({
+      priorAnswers,
+      // A fresh array with identical content but a different object
+      // reference — exactly what JSON.parse(JSON.stringify(...)) over the
+      // wire produces, even when nothing actually changed.
+      submittedAnswers: {
+        symptoms: JSON.parse(JSON.stringify(priorAnswers.symptoms)),
+        pestSeverity: "ongoing",
+      },
+    });
+    expect(result).toMatchObject({
+      success: true,
+      answers: { symptoms: ["live_pests", "droppings"], pestSeverity: "ongoing" },
+    });
+  });
+
+  it("allows correcting a previously answered symptoms selection", () => {
+    const priorAnswers = { ...priorThroughPestType, symptoms: ["live_pests"], pestSeverity: "ongoing" };
+    const result = validateQualificationSubmission({
+      priorAnswers,
+      submittedAnswers: { symptoms: ["live_pests", "dead_pests"] },
+    });
+    expect(result).toMatchObject({ success: true, answers: { symptoms: ["live_pests", "dead_pests"] } });
   });
 });

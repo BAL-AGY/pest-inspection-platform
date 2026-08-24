@@ -1,6 +1,6 @@
 import type { QualificationAnswers } from "./scoring";
 
-export type QuestionType = "single_select" | "text" | "zip" | "boolean";
+export type QuestionType = "single_select" | "multi_select" | "text" | "zip" | "boolean";
 
 export interface QualificationOption {
   value: string;
@@ -78,6 +78,22 @@ export const QUALIFICATION_QUESTIONS: QualificationQuestion[] = [
       { value: "bed_bugs", label: "Bed bugs" },
       { value: "spiders", label: "Spiders" },
       { value: "wasps", label: "Wasps/stinging insects" },
+    ],
+    required: true,
+  },
+  {
+    id: "symptoms",
+    type: "multi_select",
+    prompt: "What are you seeing?",
+    options: [
+      { value: "live_pests", label: "Live pests" },
+      { value: "droppings", label: "Droppings" },
+      { value: "damage", label: "Damage to the home" },
+      { value: "noises", label: "Scratching / noises" },
+      { value: "nests_webs", label: "Nests / webs" },
+      { value: "bites_irritation", label: "Bites / irritation" },
+      { value: "dead_pests", label: "Dead pests" },
+      { value: "other", label: "Other / not sure" },
     ],
     required: true,
   },
@@ -174,6 +190,22 @@ export function isInServiceArea(
   return serviceZipCodes.includes(zipCode.trim());
 }
 
+/**
+ * Reference equality (`!==`) is wrong for multi_select array answers: the
+ * exact same selection deserializes to a brand-new array object on every
+ * request (client state -> JSON over HTTP -> JSON.parse from storage), so a
+ * naive `!==` would treat an unchanged answer as a fresh "correction" on
+ * every subsequent submission and break the "at most one new entry per
+ * request" progression check. Order-sensitive is fine — the UI always
+ * stores selections in the question's canonical option order.
+ */
+export function answersEqual(a: unknown, b: unknown): boolean {
+  if (Array.isArray(a) && Array.isArray(b)) {
+    return a.length === b.length && a.every((item, index) => item === b[index]);
+  }
+  return a === b;
+}
+
 function questionById(id: string): QualificationQuestion | undefined {
   return QUALIFICATION_QUESTIONS.find((question) => question.id === id);
 }
@@ -189,6 +221,26 @@ function validateAnswerValue(
           code: "invalid_answer_type",
           questionId: question.id,
           message: "This answer must be yes or no.",
+        };
+  }
+
+  if (question.type === "multi_select") {
+    if (!Array.isArray(value) || value.length === 0 || !value.every((item) => typeof item === "string")) {
+      return {
+        code: "invalid_answer_type",
+        questionId: question.id,
+        message: "Select at least one option.",
+      };
+    }
+    const allowedValues = [...(question.options ?? []), ...(question.acceptedOptions ?? [])].map((option) => option.value);
+    const allValid = value.every((item) => allowedValues.includes(item));
+    const noDuplicates = new Set(value).size === value.length;
+    return allValid && noDuplicates
+      ? null
+      : {
+          code: "invalid_answer_value",
+          questionId: question.id,
+          message: "Select from the available options.",
         };
   }
 
@@ -265,7 +317,7 @@ export function validateQualificationSubmission(input: {
 
   const newEntries = submittedEntries.filter(([questionId, value]) => {
     if (!(questionId in prior)) return true;
-    return prior[questionId] !== value;
+    return !answersEqual(prior[questionId], value);
   });
 
   if (newEntries.length > 1) {
@@ -286,7 +338,7 @@ export function validateQualificationSubmission(input: {
         success: true,
         answers: extractValidQuestionAnswers({
           ...prior,
-          [questionId]: value as string | boolean,
+          [questionId]: value as string | boolean | string[],
         }),
       };
     }
@@ -311,7 +363,7 @@ export function validateQualificationSubmission(input: {
       success: true,
       answers: {
         ...prior,
-        [questionId]: value as string | boolean,
+        [questionId]: value as string | boolean | string[],
       },
     };
   }

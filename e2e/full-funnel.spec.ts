@@ -30,9 +30,9 @@ const OWNER_PASSWORD = process.env.SEED_OWNER_PASSWORD ?? "changeme123";
 test("real prospect moves through the full acquisition-to-outcome journey", async ({ page }) => {
   // 1-2. Traffic source lands on the public landing page.
   await page.goto("/?utm_source=google&utm_medium=cpc&utm_campaign=e2e_playwright");
-  await expect(page.getByRole("heading", { name: /still seeing pests/i })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /protect your home/i })).toBeVisible();
 
-  await page.getByRole("link", { name: /get my free inspection/i }).click();
+  await page.getByRole("link", { name: /check availability/i }).click();
   await expect(page).toHaveURL(/\/inspection/);
   await expect(page.getByText("Potential Value Range", { exact: true })).toHaveCount(0);
 
@@ -45,6 +45,10 @@ test("real prospect moves through the full acquisition-to-outcome journey", asyn
 
   await expect(page.getByRole("heading", { name: /what pest issue/i })).toBeVisible();
   await page.getByRole("button", { name: "General Pest" }).click();
+
+  await expect(page.getByRole("heading", { name: /what are you seeing/i })).toBeVisible();
+  await page.getByRole("button", { name: "Live pests", exact: true }).click();
+  await page.getByRole("button", { name: "Continue", exact: true }).click();
 
   await expect(page.getByRole("heading", { name: /describe the problem/i })).toBeVisible();
   await page.getByRole("button", { name: /serious infestation/i }).click();
@@ -99,6 +103,7 @@ test("real prospect moves through the full acquisition-to-outcome journey", asyn
     { zipCode: "73301" },
     { isHomeowner: true },
     { pestType: "general_pest" },
+    { symptoms: ["live_pests"] },
     { pestSeverity: "severe" },
     { hasExistingProvider: false },
     { timeline: "asap" },
@@ -148,6 +153,9 @@ test("real prospect moves through the full acquisition-to-outcome journey", asyn
   await expect(page.locator("p.uppercase", { hasText: "sql" })).toBeVisible();
   await expect(page.getByLabel("Lead summary").getByText("73301", { exact: true })).toBeVisible();
   await expect(page.getByText("General Pest", { exact: true }).first()).toBeVisible();
+  // The multi-select "What are you seeing?" answer renders as its
+  // human-readable label(s) in the Qualification answers section.
+  await expect(page.getByText("Live pests", { exact: true })).toBeVisible();
   await expect(page.getByText("Potential Value Range", { exact: true })).toBeVisible();
   await expect(page.getByText("$200–$1,000", { exact: true })).toBeVisible();
   await expect(page.getByText("google", { exact: true }).first()).toBeVisible();
