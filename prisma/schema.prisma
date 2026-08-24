@@ -56,6 +56,7 @@ model Company {
   communicationProviderAccounts CommunicationProviderAccount[]
   communicationWebhookEvents    CommunicationWebhookEvent[]
   visitorAttributions           VisitorAttribution[]
+  campaignExperiments           CampaignExperiment[]
 }
 
 // ---------------------------------------------------------------------------
@@ -366,6 +367,54 @@ model MarketingSpend {
   createdAt DateTime @default(now()) @db.Timestamptz(3)
 
   @@index([companyId, source, periodStart])
+}
+
+// ---------------------------------------------------------------------------
+// Marketing intelligence — campaign experiment tracker (see
+// docs/marketing-intelligence/). Deliberately stores only the experiment's
+// planning fields and which real attributed traffic belongs to it
+// (utmSource/utmMedium/utmCampaign); it never stores its own copy of
+// visitor/lead/booking/revenue counts. Live metrics are always computed by
+// filtering the existing FunnelEvent/MarketingSpend data by those same UTM
+// dimensions, reusing the same campaignPerformance() grouping the Marketing
+// Performance table already uses — one source of truth, never two.
+// ---------------------------------------------------------------------------
+
+model CampaignExperiment {
+  id        String  @id @default(cuid())
+  companyId String
+  company   Company @relation(fields: [companyId], references: [id])
+  isDemo    Boolean @default(false)
+
+  hypothesis  String
+  platform    String // "meta" | "google_search" | "google_lsa" | "seo" | "other"
+  audience    String?
+  creative    String?
+  offer       String?
+  landingPage String?
+  cta         String?
+
+  // Identifies which real attributed traffic belongs to this experiment.
+  utmSource   String
+  utmMedium   String?
+  utmCampaign String?
+
+  status    String    @default("planned") // "planned" | "running" | "winner" | "loser" | "inconclusive"
+  startDate DateTime? @db.Timestamptz(3)
+  endDate   DateTime? @db.Timestamptz(3)
+
+  // JSON-encoded string[] of case-study ids (docs/marketing-intelligence/
+  // case-studies/*.json) that motivated this test — traceability back to the
+  // evidence, not a DB relation, since case studies are versioned file
+  // content rather than tenant data.
+  sourceCaseStudyIds String?
+
+  notes String?
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  @@index([companyId, status])
 }
 
 // ---------------------------------------------------------------------------

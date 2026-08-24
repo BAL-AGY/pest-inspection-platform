@@ -58,8 +58,11 @@ function pestCategoryPerformance(events: CategorizedEvent[], categories: ReturnT
   }));
 }
 
-type Spend = { source: string; medium: string | null; campaign: string | null; content: string | null; amountCents: number };
-function campaignPerformance(events: AnalyticsEvent[], spends: Spend[]) {
+// Exported so other consumers (e.g. the marketing-intelligence experiment
+// tracker — see src/lib/marketing-intelligence/experiments.ts) can reuse this
+// exact event-counting/spend-matching logic instead of re-implementing it.
+export type CampaignPerformanceSpend = { source: string; medium: string | null; campaign: string | null; content: string | null; amountCents: number };
+export function campaignPerformance(events: AnalyticsEvent[], spends: CampaignPerformanceSpend[]) {
   const map = new Map<string, { source: string; medium: string; campaign: string; content: string; visitors: Set<string>; leads: Set<string>; qualified: Set<string>; booked: Set<string>; completed: Set<string>; customers: Set<string>; revenueCents: number; revenueKnown: boolean; spendCents: number | null }>();
   const dimensions = (value: { source?: string | null; medium?: string | null; campaign?: string | null; content?: string | null }) => [value.source ?? "direct", value.medium ?? "Unspecified", value.campaign ?? "Unspecified", value.content ?? "Unspecified"];
   const get = (dims: string[]) => {

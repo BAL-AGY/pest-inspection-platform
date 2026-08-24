@@ -23,7 +23,9 @@
     "db:seed": "tsx prisma/seed.ts",
     "db:staging:demo": "tsx prisma/staging-demo.ts seed",
     "db:staging:reseed": "tsx prisma/staging-demo.ts reset",
-    "staging:smoke": "node scripts/staging-smoke.mjs"
+    "staging:smoke": "node scripts/staging-smoke.mjs",
+    "validate:case-studies": "tsx scripts/validate-case-studies.ts",
+    "import:case-study": "tsx scripts/validate-case-studies.ts"
   },
   "dependencies": {
     "@date-fns/tz": "^1.5.0",

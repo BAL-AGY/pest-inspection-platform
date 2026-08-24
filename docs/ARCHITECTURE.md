@@ -452,6 +452,43 @@ conversion events inherit last touch. `MarketingSpend` and event reporting use
 source/medium/campaign/content dimensions; costs, CAC, ROAS and ROI remain null
 when required real spend/revenue is absent. See `docs/ANALYTICS.md`.
 
+### Marketing intelligence architecture
+
+`docs/marketing-intelligence/` (full detail: `README.md`,
+`CASE-STUDY-SCHEMA.md`, `BENCHMARKS.md`, `CAMPAIGN-PLAYBOOK.md`) adds a
+case-study-driven benchmark/recommendation system, kept strictly separate
+from real tenant data at every layer:
+
+- **Case studies** (external industry evidence) are versioned, file-based
+  repo content — individual JSON files under
+  `docs/marketing-intelligence/case-studies/`, validated by a Zod schema
+  (`src/lib/marketing-intelligence/case-study-schema.ts`) — not database
+  rows, since they're curated evidence rather than tenant data. A malformed
+  file is rejected outright (never partially loaded or defaulted).
+- **Benchmarks/recommendations** (`src/lib/marketing-intelligence/
+  benchmarks.ts`, `recommendations.ts`) are pure, deterministic functions
+  over the loaded case studies — no ML, no hidden weighting, every threshold
+  a named exported constant. A benchmark only renders once
+  `MIN_BENCHMARK_SAMPLE_SIZE` compatible studies support it; below that the
+  UI shows "Insufficient evidence," never a number from too little data.
+- **The experiment tracker** (`CampaignExperiment` in `prisma/schema.prisma`)
+  *is* real per-company tenant data, but stores only planning fields
+  (hypothesis, platform, UTM identifiers, status) — never its own copy of
+  visitor/lead/booking/revenue counts. Live metrics are always computed by
+  reusing `campaignPerformance()` (`src/lib/dashboard-metrics.ts`), the same
+  function already powering the Marketing Performance table, filtered to
+  the experiment's UTM identifiers — one source of truth for real numbers,
+  never a second one.
+- **Ad platform adapters** (`src/lib/ad-platforms/`) define the
+  `AdPlatformAdapter` interface a future Meta/Google Ads integration will
+  implement; the stub `MetaAdapter`/`GoogleAdsAdapter` throw if called
+  without credentials, and nothing in the app calls them yet, so their
+  absence never affects build or deployment.
+
+The dashboard surface lives at `/dashboard/intelligence` ("Acquisition
+Intelligence"), a separate page from the Overview Command Center's live
+funnel diagram, so it never clutters that view.
+
 ### Deployment strategy
 
 The recommended pilot topology and alternatives are in `docs/DEPLOYMENT.md`.
