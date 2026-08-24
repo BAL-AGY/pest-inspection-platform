@@ -144,7 +144,42 @@ export default function InspectionFunnelPage() {
           });
         }
 
-        if (data.qualificationComplete) {
+        // Check for an active appointment BEFORE falling back to
+        // qualificationComplete → "contact". Without this, a visitor whose
+        // browser still holds a leadId/leadToken from an already-booked
+        // visit (a page refresh right after booking, a returning tester, or
+        // simply reopening the tab later) was dropped straight into the
+        // contact form with every qualification question silently skipped —
+        // this was the root cause of qualification questions appearing to
+        // have "disappeared" on production.
+        const activeAppointment =
+          data.activeAppointment &&
+          typeof data.activeAppointment === "object" &&
+          "scheduledStart" in data.activeAppointment &&
+          "timeZone" in data.activeAppointment
+            ? (data.activeAppointment as { scheduledStart: unknown; timeZone: unknown })
+            : null;
+        if (activeAppointment && typeof activeAppointment.scheduledStart === "string") {
+          setConsent({
+            sms: "smsConsent" in returnedLead && returnedLead.smsConsent === true,
+            email: "emailConsent" in returnedLead && returnedLead.emailConsent === true,
+            smsMarketing: "smsMarketingConsent" in returnedLead && returnedLead.smsMarketingConsent === true,
+            emailMarketing: "emailMarketingConsent" in returnedLead && returnedLead.emailMarketingConsent === true,
+          });
+          setConfirmedWhen(
+            new Date(activeAppointment.scheduledStart).toLocaleString("en-US", {
+              weekday: "long",
+              month: "long",
+              day: "numeric",
+              hour: "numeric",
+              minute: "2-digit",
+              ...(typeof activeAppointment.timeZone === "string"
+                ? { timeZone: activeAppointment.timeZone, timeZoneName: "short" }
+                : {}),
+            }),
+          );
+          setStage("confirmed");
+        } else if (data.qualificationComplete) {
           setStage("contact");
         }
       } catch {

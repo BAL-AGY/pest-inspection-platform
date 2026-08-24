@@ -45,7 +45,11 @@ export default async function LandingPage({
 
       {/* HERO */}
       <section className="relative isolate flex flex-col justify-center overflow-hidden px-6 py-24 sm:py-32 text-center text-white">
-        <HeroMedia />
+        <HeroMedia
+          videoSrc="/hero/technician-inspection.mp4"
+          webmSrc="/hero/technician-inspection.webm"
+          posterSrc="/hero/technician-inspection.jpg"
+        />
         <div className="relative mx-auto flex max-w-3xl flex-col items-center gap-6">
           <p className="text-sm font-semibold tracking-wide text-emerald-300">{company.name}</p>
           <p className="rounded-full border border-emerald-400/30 bg-emerald-500/10 px-4 py-1.5 text-xs font-semibold uppercase tracking-wider text-emerald-200">

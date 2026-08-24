@@ -88,3 +88,50 @@ test("multi-select symptoms persist through Back navigation and refresh", async 
   await expect(page.getByRole("heading", { name: /how would you describe the problem/i })).toBeVisible();
   await expect(page.getByRole("heading", { name: /what are you seeing/i })).toHaveCount(0);
 });
+
+/**
+ * Root cause of the "qualification questions disappeared" report: the
+ * resume-on-mount effect only checked `qualificationComplete` and
+ * unconditionally jumped to the contact-form stage, with no awareness that
+ * the resumed lead might already have an active appointment. A visitor
+ * whose browser still held a leadId/leadToken from an already-booked visit
+ * (a refresh right after booking, a returning tester, reopening the tab
+ * later) was dropped straight into the contact form with every
+ * qualification question silently skipped and no re-booking protection.
+ * src/app/api/leads/route.ts now returns `activeAppointment` on a
+ * continuation request, and src/app/inspection/page.tsx branches to the
+ * "confirmed" stage when one exists.
+ */
+test("reloading after booking shows the confirmation, not a blank resume to the contact form", async ({ page }) => {
+  await page.goto("/inspection");
+  await page.getByPlaceholder("ZIP code").fill("73301");
+  await page.getByRole("button", { name: "Next", exact: true }).click();
+  await page.getByRole("button", { name: "Yes" }).click();
+  await page.getByRole("button", { name: "Rodents", exact: true }).click();
+  await page.getByRole("button", { name: "Live pests", exact: true }).click();
+  await page.getByRole("button", { name: "Continue", exact: true }).click();
+  await page.getByRole("button", { name: "It's a serious infestation", exact: true }).click();
+  await page.getByRole("button", { name: "No" }).click();
+  await page.getByRole("button", { name: "As soon as possible", exact: true }).click();
+
+  const stamp = Date.now();
+  await page.getByPlaceholder("First name").fill("Resume");
+  await page.getByPlaceholder("Last name").fill("AfterBooking");
+  await page.getByPlaceholder("Email").fill(`resume.after.booking.${stamp}@example.com`);
+  await page.getByPlaceholder("Phone").fill("5125550188");
+  await page.getByRole("button", { name: "See Available Times" }).click();
+
+  const slotButtons = page.locator("button.rounded-md.border").filter({ hasNotText: "Book Free Inspection" });
+  test.skip((await slotButtons.count()) === 0, "No availability in the default booking window — local test-data capacity exhausted, not a product bug.");
+  await slotButtons.first().click();
+  await page.getByRole("button", { name: "Book Free Inspection" }).click();
+  await expect(page.getByRole("heading", { name: /you.re booked/i })).toBeVisible();
+
+  // The exact repro: reload with the leadId/leadToken still in
+  // localStorage — must show the booked confirmation again, not the
+  // contact form with every qualification question missing.
+  await page.reload();
+  await expect(page.getByRole("heading", { name: /you.re booked/i })).toBeVisible();
+  await expect(page.getByPlaceholder("First name")).toHaveCount(0);
+  await expect(page.getByPlaceholder("ZIP code")).toHaveCount(0);
+});

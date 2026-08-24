@@ -4,6 +4,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import {
   getActiveCompany,
+  parseCompanyTimeZone,
   parseScoringRules,
   parseServiceZipCodes,
   parseSupportedPests,
@@ -431,6 +432,26 @@ async function saveLead(req: NextRequest) {
     visitorId: lead.visitorId ?? visitorId,
   });
 
+  // A visitor resuming (leadId supplied) may already have an active
+  // inspection booked from an earlier visit/session on this lead — reload,
+  // stale localStorage, or a returning tester. Without surfacing this, the
+  // funnel client has no way to distinguish "resume mid-qualification" from
+  // "already booked" and was falling through to re-show the contact form
+  // with every qualification question skipped (see docs — this is the
+  // root cause of the "questions disappeared" report). Only an active
+  // (not cancelled/no-show) appointment counts; a completed/cancelled one
+  // should not block a homeowner from continuing to use the funnel.
+  let activeAppointment: { scheduledStart: Date; timeZone: string } | null = null;
+  if (existing) {
+    const appointment = await prisma.appointment.findFirst({
+      where: { leadId: lead.id, status: { in: ["booked", "rescheduled"] } },
+      orderBy: { scheduledStart: "desc" },
+    });
+    if (appointment) {
+      activeAppointment = { scheduledStart: appointment.scheduledStart, timeZone: parseCompanyTimeZone(company) };
+    }
+  }
+
   return NextResponse.json({
     lead,
     leadToken: issuedLeadToken,
@@ -439,6 +460,7 @@ async function saveLead(req: NextRequest) {
     eligibleForBooking: qualification.eligibleForBooking && classification === "sql",
     inServiceArea: qualification.inServiceArea,
     supportedPest: qualification.supportedPest,
+    activeAppointment,
   });
 }
 

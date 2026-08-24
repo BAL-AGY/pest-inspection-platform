@@ -62,6 +62,12 @@ export default async function DashboardOverviewPage({ searchParams }: { searchPa
       <p className="mt-4 text-xs text-emerald-200/70">
         Ad traffic → qualified homeowner → inspection → customer → revenue. Every number above comes from real stored leads, appointments, and marketing-spend rows for this range — nothing here is simulated as &quot;live.&quot;
       </p>
+
+      <div className="mt-6 border-t border-white/10 pt-6">
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-emerald-200">Live acquisition funnel</h2>
+        <p className="mb-4 mt-1 text-xs text-emerald-200/60">Click a stage to see the actual homeowners currently there. Traffic → landed → started → qualified → booked → inspection → won → revenue.</p>
+        <FunnelDiagram stages={m.funnelStages} stageLeads={stageLeads} revenueCents={m.revenueCents} />
+      </div>
     </section>
 
     <section><h2 className="mb-3 text-sm font-semibold uppercase text-zinc-500">Needs your attention today</h2><div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
@@ -70,12 +76,6 @@ export default async function DashboardOverviewPage({ searchParams }: { searchPa
     </div></section>
     <section><h2 className="mb-3 text-sm font-semibold uppercase text-zinc-500">Business outcome</h2><div className="grid grid-cols-2 gap-3 lg:grid-cols-6"><Stat label="Marketing spend" value={money(m.marketingSpendCents)}/><Stat label="Leads" value={m.newLeads}/><Stat label="Qualified leads" value={m.qualifiedCount}/><Stat label="Booked inspections" value={m.bookedCount} accent/><Stat label="Customers won" value={m.customersWon}/><Stat label="Revenue attributed" value={money(m.revenueCents)} accent/></div></section>
     <section><h2 className="mb-3 text-sm font-semibold uppercase text-zinc-500">Marketing efficiency</h2><div className="grid grid-cols-2 gap-3 lg:grid-cols-6"><Stat label="Cost per lead" value={money(m.costMetrics.costPerLeadCents)} hint="Marketing spend ÷ leads"/><Stat label="Cost per qualified lead" value={money(m.costMetrics.costPerQualifiedLeadCents)} hint="Marketing spend ÷ qualified leads"/><Stat label="Cost per qualified booked inspection" value={money(m.costMetrics.costPerBookedInspectionCents)} accent hint="Marketing spend ÷ booked inspections"/><Stat label="Customer acquisition cost" value={money(m.cac)} hint="Marketing spend ÷ customers won"/><Stat label="ROAS" value={m.roas === null ? "Unavailable" : `${m.roas.toFixed(2)}x`} hint="Revenue ÷ marketing spend"/><Stat label="ROI" value={percent(m.roi)} hint="Profit as a % of marketing spend"/></div></section>
-
-    <section>
-      <h2 className="mb-1 text-sm font-semibold uppercase text-zinc-500">Live acquisition funnel</h2>
-      <p className="mb-3 text-xs text-zinc-400">Click a stage to see the actual homeowners currently there. Traffic → landed → started → qualified → booked → inspection → won.</p>
-      <FunnelDiagram stages={m.funnelStages} stageLeads={stageLeads} />
-    </section>
 
     <section><h2 className="mb-1 text-sm font-semibold uppercase text-zinc-500">Funnel drop-off</h2><p className="mb-3 text-xs text-zinc-400">Where homeowners stop answering questions before finishing the funnel.</p><div className="overflow-hidden rounded-lg border border-zinc-200 bg-white"><div className="grid grid-cols-4 border-b bg-zinc-50 px-4 py-2 text-xs font-semibold text-zinc-500"><span>Step</span><span>Reached</span><span>Completed</span><span>Abandoned</span></div>{m.questionDropOff.map((row) => <div key={row.key} className="grid grid-cols-4 border-b px-4 py-2 text-sm last:border-0"><span>{row.key === "contact" ? "Contact information" : QUALIFICATION_QUESTIONS.find((q) => q.id === row.key)?.prompt ?? row.key}</span><span>{row.reached}</span><span>{row.completed} ({percent(row.conversion)})</span><span className={row.abandoned ? "text-rose-700" : ""}>{row.abandoned}</span></div>)}</div></section>
 

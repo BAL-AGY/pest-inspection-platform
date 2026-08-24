@@ -20,19 +20,19 @@ function getReducedMotionServerSnapshot() {
 /**
  * Hero background media. Plays a short muted looping video when a source is
  * configured and the visitor hasn't requested reduced motion; falls back to
- * a tasteful static gradient otherwise — including right now, since no
- * licensed/approved video asset exists in this repo yet.
+ * a tasteful static gradient (or the poster image, once loaded) otherwise.
  *
- * To add a real video later:
- * 1. Drop an approved, properly licensed MP4 (and ideally a WebM for
- *    smaller file size) into `public/hero/` — e.g.
- *    `public/hero/technician-perimeter.mp4` and `.webm`. Ideal footage: a
- *    uniformed technician treating the exterior perimeter of a clean
- *    suburban home. Keep it short (5–10s), muted-safe, and under ~3MB.
- * 2. Pass the paths in from src/app/page.tsx:
- *      <HeroMedia videoSrc="/hero/technician-perimeter.mp4" webmSrc="/hero/technician-perimeter.webm" posterSrc="/hero/technician-perimeter.jpg" />
- * No other changes are required — this component already handles the
- * loading/fade-in, autoplay-policy fallback, and prefers-reduced-motion.
+ * Current asset: public/hero/technician-inspection.{mp4,webm} + .jpg poster
+ * — a technician in a hard hat and hi-vis vest inspecting a suburban home's
+ * doorway with a clipboard, shot from outside (siding visible both sides).
+ * Sourced from Pexels ("A Man Inspecting the Door Hinges" by RDNE Stock
+ * project, pexels.com/video/a-man-inspecting-the-door-hinges-8293308),
+ * used under the Pexels License (free for commercial use, no attribution
+ * required, modification permitted — pexels.com/license). Downloaded at
+ * 1920x1080, then re-encoded here to a muted, 7s, 1280px-wide loop with no
+ * audio track to keep it small (~330KB MP4 / ~260KB WebM) and fast on
+ * mobile. To replace with different footage later, drop new files at the
+ * same paths and this component needs no changes.
  */
 export default function HeroMedia({
   videoSrc,
@@ -52,9 +52,16 @@ export default function HeroMedia({
   );
   const showVideo = Boolean(videoSrc) && !prefersReducedMotion && !errored;
 
+  // Whenever the video isn't actually playing (reduced motion, not yet
+  // loaded, or errored) the poster photo itself is the fallback — a real
+  // premium photo of the technician, not just an abstract gradient — so a
+  // reduced-motion visitor or a slow connection still gets the intended
+  // "this is being professionally handled" feeling immediately.
+  const showPosterFallback = Boolean(posterSrc) && (!showVideo || !ready);
+
   return (
     <div className="absolute inset-0 -z-10 overflow-hidden bg-gradient-to-br from-emerald-950 via-emerald-900 to-zinc-900">
-      {/* Tasteful fallback pattern — always present underneath, visible whenever video isn't playing. */}
+      {/* Tasteful abstract pattern — the ultimate fallback if even the poster photo can't load. */}
       <div
         className="absolute inset-0 opacity-60"
         style={{
@@ -63,6 +70,13 @@ export default function HeroMedia({
         }}
         aria-hidden
       />
+      {showPosterFallback && posterSrc && (
+        <div
+          className="absolute inset-0 bg-cover bg-center transition-opacity duration-500"
+          style={{ backgroundImage: `url(${posterSrc})` }}
+          aria-hidden
+        />
+      )}
       {showVideo && videoSrc && (
         <video
           className={`absolute inset-0 h-full w-full object-cover transition-opacity duration-700 ${ready ? "opacity-60" : "opacity-0"}`}
@@ -70,7 +84,7 @@ export default function HeroMedia({
           muted
           loop
           playsInline
-          preload="none"
+          preload="auto"
           poster={posterSrc}
           onCanPlay={() => setReady(true)}
           onError={() => setErrored(true)}
