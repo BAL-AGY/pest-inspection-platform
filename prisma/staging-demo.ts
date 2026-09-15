@@ -229,8 +229,10 @@ async function seedDemoData(companyId: string) {
 
   await prisma.marketingSpend.createMany({
     data: [
-      { id: "staging-demo-spend-google", companyId, source: "google", medium: "cpc", campaign: "termite-inspection", amountCents: 45000, periodStart: atDaysFromNow(-7, 0), periodEnd: atDaysFromNow(0, 23), isDemo: true },
-      { id: "staging-demo-spend-facebook", companyId, source: "facebook", medium: "paid_social", campaign: "summer-pest-relief", amountCents: 25000, periodStart: atDaysFromNow(-7, 0), periodEnd: atDaysFromNow(0, 23), isDemo: true },
+      // One won demo customer and $48.50 of demo ad spend produce the
+      // intentionally simple demo CAC shown in the dashboard.
+      { id: "staging-demo-spend-google", companyId, source: "google", medium: "cpc", campaign: "termite-inspection", amountCents: 3000, periodStart: atDaysFromNow(-7, 0), periodEnd: atDaysFromNow(0, 23), isDemo: true },
+      { id: "staging-demo-spend-facebook", companyId, source: "facebook", medium: "paid_social", campaign: "summer-pest-relief", amountCents: 1850, periodStart: atDaysFromNow(-7, 0), periodEnd: atDaysFromNow(0, 23), isDemo: true },
     ],
     skipDuplicates: true,
   });
