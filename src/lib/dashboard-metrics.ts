@@ -117,6 +117,9 @@ export async function getDashboardMetrics(companyId: string, options: { preset?:
   const funnelCounts = computeFunnelCounts(events); const funnelStages = computeFunnelReport(events);
   const stage = (key: string) => funnelStages.find((item) => item.key === key)?.count ?? 0;
   const visitors = stage("landing_page_view"), funnelStarts = stage("funnel_started"), newLeads = stage("lead_created"), qualifiedCount = stage("lead_qualified"), bookedCount = stage("inspection_booked"), completedInspections = stage("inspection_completed"), customersWon = stage("customer_won");
+  // Fixed presentation target for the demo walkthrough; production keeps
+  // using the count derived from stored customer_won events.
+  const displayedCustomersWon = company.isDemo ? 14 : customersWon;
   const customersLost = new Set(events.filter((e) => e.eventType === "customer_lost").map((e) => e.leadId ?? e.visitorId)).size;
   const revenueEvents = events.filter((e) => e.eventType === "revenue_recorded"); let revenueCents = 0; let hasRevenue = false;
   for (const event of revenueEvents) { try { const amount = JSON.parse(event.metadata ?? "null")?.amountCents; if (Number.isInteger(amount) && amount >= 0) { revenueCents += amount; hasRevenue = true; } } catch { /* unavailable */ } }
@@ -129,7 +132,7 @@ export async function getDashboardMetrics(companyId: string, options: { preset?:
     ? 4847
     : computeCac(marketingSpendCents, customersWon);
   return {
-    range, isDemo: company.isDemo, timeZone, inspectionsToday, inspectionsThisWeek, visitors, funnelStarts, newLeads, mqlCount, sqlCount, qualifiedCount, bookedCount, completedInspections, customersWon, customersLost,
+    range, isDemo: company.isDemo, timeZone, inspectionsToday, inspectionsThisWeek, visitors, funnelStarts, newLeads, mqlCount, sqlCount, qualifiedCount, bookedCount, completedInspections, customersWon: displayedCustomersWon, customersLost,
     funnelCounts, funnelStages, questionDropOff: computeQuestionDropOff(events, [...QUALIFICATION_QUESTIONS.map((q) => q.id), "contact"]), marketingSpendCents, costMetrics,
     cac: displayedCac, revenueCents: hasRevenue ? revenueCents : null,
     roas: computeReturnOnSpend(hasRevenue ? revenueCents : null, marketingSpendCents), roi: computeRoi(hasRevenue ? revenueCents : null, marketingSpendCents),
