@@ -12,6 +12,7 @@ const booking = {
 
 beforeEach(() => {
   vi.stubEnv("OWNER_BOOKING_SMS_ENABLED", "true");
+  vi.stubEnv("OWNER_BOOKING_SMS_INCLUDE_DEMO", "false");
   vi.stubEnv("OWNER_BOOKING_SMS_COMPANY_SLUG", "pest-company");
   vi.stubEnv("OWNER_BOOKING_SMS_TO", "+15555550101");
   vi.stubEnv("TWILIO_FROM_NUMBER", "+15555550102");
@@ -50,6 +51,11 @@ describe("owner booking alerts", () => {
     vi.stubEnv("TWILIO_AUTH_TOKEN", "");
     await sendOwnerBookingAlert(booking);
     expect(sendIfAllowed).not.toHaveBeenCalled();
+  });
+  it("allows demo bookings only with the explicit owner setting", async () => {
+    vi.stubEnv("OWNER_BOOKING_SMS_INCLUDE_DEMO", "true");
+    await sendOwnerBookingAlert({ ...booking, appointment: { ...booking.appointment, isDemo: true } });
+    expect(sendIfAllowed).toHaveBeenCalledOnce();
   });
   it("isolates communication failures from the booking", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});

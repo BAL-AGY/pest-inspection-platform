@@ -38,7 +38,8 @@ export async function sendOwnerBookingAlert({ appointment, company, lead }: {
   lead: Pick<Lead, "id" | "firstName" | "lastName">;
 }): Promise<void> {
   if (process.env.OWNER_BOOKING_SMS_ENABLED !== "true") return;
-  if (company.slug !== process.env.OWNER_BOOKING_SMS_COMPANY_SLUG || appointment.isDemo) return;
+  if (company.slug !== process.env.OWNER_BOOKING_SMS_COMPANY_SLUG) return;
+  if (appointment.isDemo && process.env.OWNER_BOOKING_SMS_INCLUDE_DEMO !== "true") return;
 
   try {
     const to = process.env.OWNER_BOOKING_SMS_TO?.trim() ?? "";

@@ -2,7 +2,9 @@
 
 New bookings schedule an owner SMS after the booking transaction commits. The
 message contains the customer name, appointment time in the company timezone,
-and an authenticated dashboard link. Demo appointments are excluded.
+and an authenticated dashboard link. Demo appointments are excluded unless
+`OWNER_BOOKING_SMS_INCLUDE_DEMO=true` is explicitly configured for an owner
+using the demo company. This still only sends to the configured owner.
 
 Configure these server environment variables on the deployed application:
 
