@@ -75,6 +75,7 @@ export const FUNNEL_EVENT_TYPES = [
 export type FunnelEventType = (typeof FUNNEL_EVENT_TYPES)[number];
 
 export const COMMUNICATION_TYPES = [
+  "owner_booking_alert",
   "appointment_confirmation",
   "appointment_rescheduled",
   "appointment_cancelled",

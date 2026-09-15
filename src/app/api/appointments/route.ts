@@ -1,4 +1,5 @@
-import { NextRequest, NextResponse } from "next/server";
+import { after, NextRequest, NextResponse } from "next/server";
+import { sendOwnerBookingAlert } from "@/lib/owner-booking-alert";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
@@ -211,6 +212,8 @@ export async function POST(req: NextRequest) {
     }
     throw err;
   }
+
+  after(() => sendOwnerBookingAlert({ appointment, company, lead }));
 
   const when = requestedStart.toLocaleString("en-US", {
     weekday: "long",

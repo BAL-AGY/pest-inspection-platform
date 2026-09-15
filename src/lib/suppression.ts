@@ -25,6 +25,7 @@ import {
   type MessageChannel,
   type OutboundMessage,
   type SendResult,
+  type CommunicationProvider,
 } from "./communications";
 import type { CommunicationType } from "./pipeline";
 
@@ -190,9 +191,10 @@ export async function sendIfAllowed(
     purpose: CommunicationPurpose;
     dedupeKey: string;
     consent: ConsentState;
+    provider?: CommunicationProvider;
   },
 ): Promise<SendResult & { duplicate?: boolean; communicationId?: string }> {
-  const provider = getProvider();
+  const provider = params.provider ?? getProvider();
   const providerAccount = await prisma.communicationProviderAccount.findFirst({
     where: {
       companyId: params.companyId,
