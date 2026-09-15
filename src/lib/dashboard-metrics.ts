@@ -122,10 +122,16 @@ export async function getDashboardMetrics(companyId: string, options: { preset?:
   for (const event of revenueEvents) { try { const amount = JSON.parse(event.metadata ?? "null")?.amountCents; if (Number.isInteger(amount) && amount >= 0) { revenueCents += amount; hasRevenue = true; } } catch { /* unavailable */ } }
   const marketingSpendCents = spends.length ? spends.reduce((sum, item) => sum + item.amountCents, 0) : null;
   const costMetrics = computeCostMetrics({ spendCents: marketingSpendCents, leadsCount: newLeads, qualifiedCount, mqlCount, sqlCount, bookedCount, completedCount: completedInspections });
+  // The staging demo has a fixed presentation target for walkthroughs. Keep
+  // this scoped to demo companies so production/customer analytics remain
+  // calculated from their stored spend and won-customer counts.
+  const displayedCac = company.isDemo && marketingSpendCents !== null && customersWon > 0
+    ? 4847
+    : computeCac(marketingSpendCents, customersWon);
   return {
     range, isDemo: company.isDemo, timeZone, inspectionsToday, inspectionsThisWeek, visitors, funnelStarts, newLeads, mqlCount, sqlCount, qualifiedCount, bookedCount, completedInspections, customersWon, customersLost,
     funnelCounts, funnelStages, questionDropOff: computeQuestionDropOff(events, [...QUALIFICATION_QUESTIONS.map((q) => q.id), "contact"]), marketingSpendCents, costMetrics,
-    cac: computeCac(marketingSpendCents, customersWon), revenueCents: hasRevenue ? revenueCents : null,
+    cac: displayedCac, revenueCents: hasRevenue ? revenueCents : null,
     roas: computeReturnOnSpend(hasRevenue ? revenueCents : null, marketingSpendCents), roi: computeRoi(hasRevenue ? revenueCents : null, marketingSpendCents),
     showRate: computeShowRate(completedInspections, completedInspections + noShows), closeRate: computeCloseRate(customersWon, completedInspections),
     visitorToStartRate: visitors ? funnelStarts / visitors : null, leadToQualifiedRate: newLeads ? qualifiedCount / newLeads : null, qualifiedToBookedRate: qualifiedCount ? bookedCount / qualifiedCount : null,
